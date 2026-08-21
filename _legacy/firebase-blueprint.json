@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "Vendor": {
+      "title": "Vendor",
+      "description": "Enterprise supplier profile and performance metrics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "contact": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "format": "email", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 100 },
+        "qualityScore": { "type": "number" },
+        "onTimeDelivery": { "type": "number" },
+        "activeContracts": { "type": "number" },
+        "totalSpend": { "type": "number" },
+        "riskLevel": { "type": "string", "enum": ["Low", "Medium", "High"] },
+        "status": { "type": "string", "enum": ["Preferred", "Approved", "On Probation", "Suspended"] }
+      },
+      "required": ["name", "contact", "email", "category"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Procurement purchase order statement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 150 },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string", "maxLength": 100 },
+        "amount": { "type": "number" },
+        "category": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 100 },
+        "requester": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "maxLength": 50 },
+        "createdDate": { "type": "string" },
+        "deliveryDate": { "type": "string" },
+        "auditScore": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["title", "vendorId", "amount", "department", "requester", "status"]
+    },
+    "DepartmentBudget": {
+      "title": "DepartmentBudget",
+      "description": "Department allocated and utilized financial budget",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "allocated": { "type": "number" },
+        "spent": { "type": "number" }
+      },
+      "required": ["name", "allocated", "spent"]
+    },
+    "RFQComparisonPool": {
+      "title": "RFQComparisonPool",
+      "description": "Request for quotation comparative bids folder",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 150 },
+        "department": { "type": "string", "maxLength": 100 },
+        "targetBudget": { "type": "number" },
+        "itemsRequired": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["title", "targetBudget", "itemsRequired"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Real-time activity and alert notification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "enum": ["po_status", "high_value_bid", "info"] },
+        "unread": { "type": "boolean" },
+        "targetTab": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["title", "description", "type", "unread"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "Internal procurement platform user account with role-based permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "format": "email", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "department": { "type": "string", "maxLength": 100 },
+        "jobTitle": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["ADMIN", "PROCUREMENT_MANAGER", "BUYER", "AUDITOR"] },
+        "status": { "type": "string", "enum": ["Actif", "Inactif", "Suspendu"] },
+        "spendingLimitMAD": { "type": "number" },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "canCreatePO": { "type": "boolean" },
+            "canApprovePO": { "type": "boolean" },
+            "canManageVendors": { "type": "boolean" },
+            "canEvaluateBids": { "type": "boolean" },
+            "canGenerateContracts": { "type": "boolean" },
+            "canManageUsers": { "type": "boolean" },
+            "canViewBudgets": { "type": "boolean" }
+          }
+        },
+        "avatarUrl": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastLogin": { "type": "string" }
+      },
+      "required": ["name", "email", "department", "role", "status", "spendingLimitMAD"]
+    }
+  },
+  "firestore": {
+    "/vendors/{vendorId}": {
+      "schema": "Vendor",
+      "description": "Suppliers collection"
+    },
+    "/purchaseOrders/{poId}": {
+      "schema": "PurchaseOrder",
+      "description": "Purchase orders collection"
+    },
+    "/budgets/{budgetId}": {
+      "schema": "DepartmentBudget",
+      "description": "Department budgets collection"
+    },
+    "/rfqCases/{rfqId}": {
+      "schema": "RFQComparisonPool",
+      "description": "Bids comparison cases"
+    },
+    "/notifications/{notifId}": {
+      "schema": "NotificationItem",
+      "description": "Alert notifications feed"
+    },
+    "/users/{userId}": {
+      "schema": "AppUser",
+      "description": "System user profiles and access roles"
+    }
+  }
+}

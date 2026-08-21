@@ -1,0 +1,286 @@
+// Schéma de données — Gestion des Achats & Approvisionnements
+// PostgreSQL 16 via Prisma ORM.
+//
+// Conformément à 01architecture.md :
+//  - Le serveur est la seule source de vérité : seul ce schéma décrit les données.
+//  - Les modèles métier sont en français ; les tables PostgreSQL aussi (@@map).
+//  - Les dates affichées restent des chaînes (contrat d'API conservé avec le frontend).
+//  - `seq` reproduit la sémantique « unshift » de l'ancien état en mémoire :
+//    le dernier enregistrement créé apparaît en premier (tri desc sur seq).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── ACHATS ───────────────────────────────
+
+model Fournisseur {
+  id              String        @id
+  name            String        @map("nom")
+  contact         String
+  email           String
+  category        String        @map("categorie")
+  qualityScore    Int           @map("score_qualite")
+  onTimeDelivery  Int           @map("taux_ponctualite")
+  activeContracts Int           @default(0) @map("contrats_actifs")
+  totalSpend      Float         @default(0) @map("depense_totale")
+  riskLevel       String        @default("Low") @map("niveau_risque")
+  status          String        @default("Approved")
+  createdAt       DateTime      @default(now()) @map("cree_le")
+  seq             Int           @unique @default(autoincrement())
+
+  bonsCommande BonCommande[]
+
+  @@map("fournisseurs")
+}
+
+model BonCommande {
+  id             String   @id
+  title          String   @map("titre")
+  vendorId       String?  @map("fournisseur_id")
+  vendorName     String   @map("fournisseur_nom")
+  amount         Float    @map("montant")
+  category       String   @map("categorie")
+  department     String   @map("departement")
+  requester      String   @map("demandeur")
+  status         String
+  createdDate    String   @map("date_creation")
+  deliveryDate   String   @map("date_livraison")
+  auditScore     Int      @map("score_audit")
+  notes          String   @default("")
+  createdAt      DateTime @default(now()) @map("cree_le")
+  seq            Int      @unique @default(autoincrement())
+
+  fournisseur   Fournisseur?     @relation(fields: [vendorId], references: [id])
+  items         LigneCommande[]
+  articlesStock ArticleStock[]
+
+  @@index([vendorId])
+  @@map("bons_commande")
+}
+
+model LigneCommande {
+  id        Int     @id @default(autoincrement())
+  poId      String  @map("bc_id")
+  desc      String
+  qty       Int
+  unitPrice Float   @map("prix_unitaire")
+  total     Float
+
+  bonCommande BonCommande @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+  @@map("lignes_commande")
+}
+
+model Budget {
+  name      String @id @map("nom")
+  allocated Float
+  spent     Float  @map("depense")
+  seq       Int    @unique @default(autoincrement())
+
+  @@map("budgets")
+}
+
+// ───────────────────────── APPELS D'OFFRES ────────────────────────────
+
+model AppelOffres {
+  id            String   @id
+  title         String   @map("titre")
+  department    String   @map("departement")
+  targetBudget  Float    @map("budget_cible")
+  itemsRequired String   @map("besoins")
+  createdAt     DateTime @default(now()) @map("cree_le")
+  seq           Int      @unique @default(autoincrement())
+
+  bids Offre[]
+
+  @@map("appels_offres")
+}
+
+model Offre {
+  id              String   @id
+  rfqId           String   @map("appel_offres_id")
+  vendorName      String   @map("fournisseur_nom")
+  unitPrice       Float    @map("prix_unitaire")
+  totalPrice      Float    @map("prix_total")
+  leadTimeDays    Int      @map("delai_jours")
+  warrantyYears   Int      @map("garantie_ans")
+  complianceLevel String   @map("conformite")
+  riskFlags       String[] @map("signaux_risque")
+  notes           String   @default("")
+
+  appelOffres AppelOffres @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+
+  @@index([rfqId])
+  @@map("offres")
+}
+
+// ────────────────────────────── UTILISATEURS ──────────────────────────
+
+model Utilisateur {
+  id               String   @id
+  name             String   @map("nom")
+  email            String   @unique
+  phone            String   @default("") @map("telephone")
+  department       String   @map("departement")
+  jobTitle         String   @map("fonction")
+  role             String
+  status           String
+  spendingLimitMAD Float    @map("plafond_depense_mad")
+  permissions      Json
+  avatarUrl        String   @default("") @map("url_avatar")
+  createdAt        String   @map("cree_le")
+  lastLogin        String   @map("derniere_connexion")
+  seq              Int      @unique @default(autoincrement())
+
+  @@map("utilisateurs")
+}
+
+// ──────────────────────────── STOCK IT ────────────────────────────────
+
+model ArticleStock {
+  id                 String   @id
+  assetTag           String   @map("etiquette")
+  name               String   @map("nom")
+  category           String   @map("categorie")
+  brand              String   @map("marque")
+  model              String
+  serialNumber       String   @map("numero_serie")
+  quantity           Int
+  availableQty       Int      @map("quantite_disponible")
+  allocatedQty       Int      @map("quantite_affectee")
+  minThreshold       Int      @map("seuil_minimum")
+  unitPriceMAD       Float    @map("prix_unitaire_mad")
+  totalValueMAD      Float    @map("valeur_totale_mad")
+  location           String   @map("emplacement")
+  status             String
+  purchaseOrderId    String?  @map("bc_id")
+  purchaseOrderTitle String?  @map("bc_titre")
+  vendorName         String?  @map("fournisseur_nom")
+  purchaseDate       String?  @map("date_achat")
+  warrantyExpiry     String?  @map("fin_garantie")
+  assignedTo         Json?    @map("affecte_a")
+  specs              Json?
+  notes              String   @default("")
+  createdAt          DateTime @default(now()) @map("cree_le")
+  seq                Int      @unique @default(autoincrement())
+
+  bonCommande BonCommande? @relation(fields: [purchaseOrderId], references: [id])
+
+  @@index([category])
+  @@index([status])
+  @@map("articles_stock")
+}
+
+// Journal immuable : pas de modification ni suppression (01architecture.md §4.6).
+model MouvementStock {
+  id              String   @id
+  stockItemId     String   @map("article_id")
+  itemName        String   @map("article_nom")
+  type            String
+  quantity        Int
+  performedBy     String   @map("effectue_par")
+  recipient       String?  @map("destinataire")
+  department      String?  @map("departement")
+  date            String
+  purchaseOrderId String?  @map("bc_id")
+  notes           String   @default("")
+  createdAt       DateTime @default(now()) @map("cree_le")
+  seq             Int      @unique @default(autoincrement())
+
+  @@index([stockItemId])
+  @@map("mouvements_stock")
+}
+
+// ───────────────────────────── AFFECTATIONS ───────────────────────────
+
+model Affectation {
+  id                        String   @id
+  reference                 String   @unique
+  templateType              String   @map("type_modele")
+  formCode                  String?  @map("code_formulaire")
+  beneficiaryName           String   @map("beneficiaire_nom")
+  beneficiaryEmail          String   @default("") @map("beneficiaire_email")
+  beneficiaryPhone          String   @default("") @map("beneficiaire_telephone")
+  beneficiaryCin            String   @default("") @map("beneficiaire_cin")
+  beneficiaryJobTitle       String   @map("beneficiaire_fonction")
+  beneficiaryDepartment     String   @map("beneficiaire_departement")
+  beneficiarySite           String   @map("beneficiaire_site")
+  assignedDate              String   @map("date_affectation")
+  status                    String
+  authorizedBy              String   @map("autorise_par")
+  dsiTitle                  String   @map("intitule_dsi")
+  // Champs spécifiques SIM / Smartphone : absents des fiches « matériel standard »
+  resourceType              String?  @map("type_ressource")
+  hasSimCard                Boolean? @map("avec_sim")
+  simOperator               String?  @map("sim_operateur")
+  simPhoneNumber            String?  @map("sim_numero")
+  simPuk                    String?  @map("sim_puk")
+  simPin                    String?  @map("sim_pin")
+  hasSmartphone             Boolean? @map("avec_smartphone")
+  deviceBrand               String?  @map("appareil_marque")
+  deviceImei                String?  @map("appareil_imei")
+  deviceModel               String?  @map("appareil_modele")
+  deviceConfiguration       String?  @map("appareil_configuration")
+  operationType             String?  @map("type_operation")
+  restitutionPreviousDevice String?  @map("restitution_appareil_precedent")
+  restitutedDeviceCondition String?  @map("etat_appareil_restitue")
+  incidentRemarks           String?  @map("remarques_incident")
+  termsAccepted             Boolean  @map("conditions_acceptees")
+  notes                     String   @default("")
+  createdAt                 DateTime @default(now()) @map("cree_le")
+  seq                       Int      @unique @default(autoincrement())
+
+  items        LigneAffectation[]
+  returnRecord RetourAffectation?
+
+  @@index([status])
+  @@map("affectations")
+}
+
+model LigneAffectation {
+  id            Int     @id @default(autoincrement())
+  assignmentId  String  @map("affectation_id")
+  stockItemId   String  @map("article_id")
+  assetTag      String  @map("etiquette")
+  name          String  @map("nom")
+  brand         String  @map("marque")
+  model         String
+  serialNumber  String  @map("numero_serie")
+  category      String  @map("categorie")
+  condition     String  @map("etat")
+  accessories   String[]
+  specs         Json?
+
+  affectation Affectation @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId])
+  @@map("lignes_affectation")
+}
+
+model RetourAffectation {
+  id                  String  @id
+  assignmentId        String  @unique @map("affectation_id")
+  returnDate          String  @map("date_retour")
+  cause               String
+  customCause         String  @default("") @map("cause_personnalisee")
+  equipmentCondition  String  @map("etat_equipement")
+  accessoriesReturned String[] @map("accessoires_restitues")
+  missingAccessories  String[] @map("accessoires_manquants")
+  dataWiped           Boolean @default(false) @map("donnees_effacees")
+  bitlockerUnlocked   Boolean @default(false) @map("bitlocker_deverrouille")
+  technicalDiagnosis  String  @default("") @map("diagnostic_technique")
+  actionTaken         String  @map("action_effectuee")
+  inspectedBy         String  @map("inspecte_par")
+  notes               String  @default("")
+
+  affectation Affectation @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@map("retours_affectation")
+}

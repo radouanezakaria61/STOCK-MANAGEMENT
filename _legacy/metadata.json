@@ -1,0 +1,6 @@
+{
+  "name": "Procurement Management Dashboard",
+  "description": "Plateforme intégrée d'achats, gestion du stock IT, affectations de matériels avec fiches imprimables et export PDF (Bénéficiaire et DSI), bons de commande (DA/PO) téléchargeables et archivage numérique.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

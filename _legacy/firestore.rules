@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Suppliers (vendors)
+    match /vendors/{vendorId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Purchase Orders
+    match /purchaseOrders/{poId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Department Budgets
+    match /budgets/{budgetId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // RFQ Comparison Cases
+    match /rfqCases/{rfqId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Notification Feed
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // System Users & Permissions
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

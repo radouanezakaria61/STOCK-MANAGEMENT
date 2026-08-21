@@ -1,0 +1,18 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Prisma
+backend/dist/
+
+# Vite / frontend
+frontend/dist/
+
+# Sauvegardes de base de données
+_sauvegardes/
