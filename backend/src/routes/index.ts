@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
 import { ErreurMetier } from "../lib/erreurs.js";
+import { estActif } from "../lib/modules.js";
 import { obtenirDonneesGlobales } from "../services/dashboard.service.js";
 import { creerFournisseur, noterFournisseur } from "../services/fournisseurs.service.js";
 import { creerBonCommande, changerStatutBonCommande } from "../services/bons-commande.service.js";
@@ -27,6 +28,7 @@ import {
   restituerAffectation,
   supprimerAffectation
 } from "../services/affectations.service.js";
+import iaRoutes from "./ia.routes.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -35,67 +37,65 @@ const h =
     fn(req, res).catch(next);
   };
 
-// ── Routeurs par domaine ──────────────────────────────────────────────
+// ── Routeurs par domaine (montage conditionnel selon MODULES_ACTIFS) ──
 
-export const routerApi = Router();
-
-// Tableau de bord / données globales
-routerApi.get("/data", h(async (_req, res) => {
+const rDashboard = Router();
+rDashboard.get("/data", h(async (_req, res) => {
   const data = await obtenirDonneesGlobales();
   res.json({ status: "ok", data });
 }));
 
-// Bons de commande
-routerApi.post("/pos", h(async (req, res) => {
+const rAchats = Router(); // module gelé
+rAchats.post("/pos", h(async (req, res) => {
   const r = await creerBonCommande(req.body);
   res.status(201).json(r);
 }));
-routerApi.post("/pos/:id/status", h(async (req, res) => {
+rAchats.post("/pos/:id/status", h(async (req, res) => {
   const r = await changerStatutBonCommande(req.params["id"]!, req.body["status"]);
   res.json(r);
 }));
 
-// Fournisseurs
-routerApi.post("/vendors", h(async (req, res) => {
+const rFournisseurs = Router(); // partagé achats/parc IT — reste actif
+rFournisseurs.post("/vendors", h(async (req, res) => {
   const r = await creerFournisseur(req.body);
   res.status(201).json(r);
 }));
-routerApi.post("/vendors/:id/rating", h(async (req, res) => {
+rFournisseurs.post("/vendors/:id/rating", h(async (req, res) => {
   const r = await noterFournisseur(req.params["id"]!, req.body);
   res.json(r);
 }));
 
-// Appels d'offres
-routerApi.post("/rfq", h(async (req, res) => {
+const rAppelsOffres = Router(); // module gelé
+rAppelsOffres.post("/rfq", h(async (req, res) => {
   const r = await creerAppelOffres(req.body);
   res.status(201).json(r);
 }));
 
-// Utilisateurs & permissions
-routerApi.get("/users", h(async (_req, res) => {
+const rUtilisateurs = Router();
+rUtilisateurs.get("/users", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerUtilisateurs() });
 }));
-routerApi.post("/users", h(async (req, res) => {
+rUtilisateurs.post("/users", h(async (req, res) => {
   const r = await creerUtilisateur(req.body);
   res.status(201).json(r);
 }));
-routerApi.put("/users/:id", h(async (req, res) => {
+rUtilisateurs.put("/users/:id", h(async (req, res) => {
   const r = await modifierUtilisateur(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/users/:id/status", h(async (req, res) => {
+rUtilisateurs.post("/users/:id/status", h(async (req, res) => {
   const r = await changerStatutUtilisateur(req.params["id"]!, req.body["status"]);
   res.json(r);
 }));
-routerApi.delete("/users/:id", h(async (req, res) => {
+rUtilisateurs.delete("/users/:id", h(async (req, res) => {
   res.json(await supprimerUtilisateur(req.params["id"]!));
 }));
 
-// Stock IT
-routerApi.get("/stock", h(async (_req, res) => {
+const rStock = Router();
+rStock.get("/stock", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerStock() });
 }));
-routerApi.get("/stock/search", h(async (req, res) => {
+rStock.get("/stock/search", h(async (req, res) => {
   const data = await rechercherStock({
     q: req.query["q"] as string | undefined,
     category: req.query["category"] as string | undefined,
@@ -103,45 +103,80 @@ routerApi.get("/stock/search", h(async (req, res) => {
   });
   res.json({ status: "ok", data });
 }));
-routerApi.post("/stock", h(async (req, res) => {
+rStock.post("/stock", h(async (req, res) => {
   const r = await creerArticle(req.body);
   res.status(201).json(r);
 }));
-routerApi.put("/stock/:id", h(async (req, res) => {
+rStock.put("/stock/:id", h(async (req, res) => {
   const r = await modifierArticle(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/stock/:id/movement", h(async (req, res) => {
+rStock.post("/stock/:id/movement", h(async (req, res) => {
   const r = await enregistrerMouvement(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/stock/import-po", h(async (req, res) => {
+rStock.post("/stock/import-po", h(async (req, res) => {
   const r = await importerDepuisBonCommande(req.body);
   res.status(r.status).json({ message: r.message, data: r.data });
 }));
-routerApi.delete("/stock/:id", h(async (req, res) => {
+rStock.delete("/stock/:id", h(async (req, res) => {
   res.json(await supprimerArticle(req.params["id"]!));
 }));
 
-// Affectations & restitutions
-routerApi.get("/assignments", h(async (_req, res) => {
+const rAffectations = Router();
+rAffectations.get("/assignments", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerAffectations() });
 }));
-routerApi.post("/assignments", h(async (req, res) => {
+rAffectations.post("/assignments", h(async (req, res) => {
   const r = await creerAffectation(req.body);
   res.status(201).json(r);
 }));
-routerApi.post("/assignments/:id/return", h(async (req, res) => {
+rAffectations.post("/assignments/:id/return", h(async (req, res) => {
   const r = await restituerAffectation(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.delete("/assignments/:id", h(async (req, res) => {
+rAffectations.delete("/assignments/:id", h(async (req, res) => {
   res.json(await supprimerAffectation(req.params["id"]!));
 }));
 
-// Intelligence artificielle (Gemini + repli local)
-import iaRoutes from "./ia.routes.js";
-routerApi.use("/", iaRoutes);
+// ── Montage conditionnel ──────────────────────────────────────────────
+
+function monter(nom: string, routeur: Router): void {
+  if (estActif(nom)) {
+    routerApi.use("/", routeur);
+  } else {
+    // Module gelé : réponse 404 JSON explicite, le code reste en place.
+    routerApi.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith(prefixeDe(nom))) {
+        res.status(404).json({ error: `Module « ${nom} » désactivé (périmètre gelé).` });
+        return;
+      }
+      next();
+    });
+  }
+}
+
+// Préfixes de chemins par module, pour les réponses 404 ciblées.
+function prefixeDe(nom: string): string {
+  switch (nom) {
+    case "achats": return "/pos";
+    case "appels-offres": return "/rfq";
+    case "ia": return "/ai";
+    default: return "\u0000"; // modules actifs : jamais en 404
+  }
+}
+
+export const routerApi = Router();
+
+monter("dashboard", rDashboard);
+monter("achats", rAchats);
+monter("fournisseurs", rFournisseurs);
+monter("appels-offres", rAppelsOffres);
+if (estActif("ia")) routerApi.use("/", iaRoutes); // module gelé
+
+monter("utilisateurs", rUtilisateurs);
+monter("stock", rStock);
+monter("affectations", rAffectations);
 
 // ── Gestionnaire d'erreurs central ────────────────────────────────────
 
