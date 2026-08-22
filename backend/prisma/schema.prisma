@@ -1,12 +1,15 @@
 // Schéma de données — Gestion des Achats & Approvisionnements
 // PostgreSQL 16 via Prisma ORM.
 //
-// Conformément à 01architecture.md :
-//  - Le serveur est la seule source de vérité : seul ce schéma décrit les données.
-//  - Les modèles métier sont en français ; les tables PostgreSQL aussi (@@map).
-//  - Les dates affichées restent des chaînes (contrat d'API conservé avec le frontend).
-//  - `seq` reproduit la sémantique « unshift » de l'ancien état en mémoire :
-//    le dernier enregistrement créé apparaît en premier (tri desc sur seq).
+// Chantier 1 — Fondations de données (02-plan-convergence.md §4.3) :
+//  - Clés primaires UUID ; l'identifiant métier lisible migre vers `reference @unique`.
+//  - Montants en Decimal(12,2) — la conversion en nombre JSON se fait dans
+//    lib/serialisation.ts, jamais en changeant le type en base.
+//  - Dates en DateTime — le formatage français se fera à l'affichage.
+//  - Historiques protégés par FK onDelete: Restrict + soft delete (`supprimeLe`),
+//    plus aucune suppression physique des entités métier.
+//  - Traçabilité `creeLe` / `modifieLe` partout ; `seq` supprimée : le tri
+//    « plus récent d'abord » est un tri sur creeLe décroissant.
 
 generator client {
   provider = "prisma-client-js"
@@ -20,7 +23,8 @@ datasource db {
 // ─────────────────────────────── ACHATS ───────────────────────────────
 
 model Fournisseur {
-  id              String        @id
+  id              String        @id @default(uuid())
+  reference       String        @unique
   name            String        @map("nom")
   contact         String
   email           String
@@ -28,11 +32,12 @@ model Fournisseur {
   qualityScore    Int           @map("score_qualite")
   onTimeDelivery  Int           @map("taux_ponctualite")
   activeContracts Int           @default(0) @map("contrats_actifs")
-  totalSpend      Float         @default(0) @map("depense_totale")
+  totalSpend      Decimal       @default(0) @db.Decimal(12, 2) @map("depense_totale")
   riskLevel       String        @default("Low") @map("niveau_risque")
   status          String        @default("Approved")
-  createdAt       DateTime      @default(now()) @map("cree_le")
-  seq             Int           @unique @default(autoincrement())
+  supprimeLe      DateTime?
+  creeLe          DateTime      @default(now()) @map("cree_le")
+  modifieLe       DateTime      @updatedAt @map("modifie_le")
 
   bonsCommande BonCommande[]
 
@@ -40,23 +45,25 @@ model Fournisseur {
 }
 
 model BonCommande {
-  id             String   @id
+  id             String   @id @default(uuid())
+  reference      String   @unique
   title          String   @map("titre")
   vendorId       String?  @map("fournisseur_id")
   vendorName     String   @map("fournisseur_nom")
-  amount         Float    @map("montant")
+  amount         Decimal  @db.Decimal(12, 2) @map("montant")
   category       String   @map("categorie")
   department     String   @map("departement")
   requester      String   @map("demandeur")
   status         String
-  createdDate    String   @map("date_creation")
-  deliveryDate   String   @map("date_livraison")
+  createdDate    DateTime @map("date_creation")
+  deliveryDate   DateTime @map("date_livraison")
   auditScore     Int      @map("score_audit")
   notes          String   @default("")
-  createdAt      DateTime @default(now()) @map("cree_le")
-  seq            Int      @unique @default(autoincrement())
+  supprimeLe     DateTime?
+  creeLe         DateTime @default(now()) @map("cree_le")
+  modifieLe      DateTime @updatedAt @map("modifie_le")
 
-  fournisseur   Fournisseur?     @relation(fields: [vendorId], references: [id])
+  fournisseur   Fournisseur?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
   items         LigneCommande[]
   articlesStock ArticleStock[]
 
@@ -69,8 +76,9 @@ model LigneCommande {
   poId      String  @map("bc_id")
   desc      String
   qty       Int
-  unitPrice Float   @map("prix_unitaire")
-  total     Float
+  unitPrice Decimal @db.Decimal(12, 2) @map("prix_unitaire")
+  total     Decimal @db.Decimal(12, 2)
+  creeLe    DateTime @default(now()) @map("cree_le")
 
   bonCommande BonCommande @relation(fields: [poId], references: [id], onDelete: Cascade)
 
@@ -79,10 +87,14 @@ model LigneCommande {
 }
 
 model Budget {
-  name      String @id @map("nom")
-  allocated Float
-  spent     Float  @map("depense")
-  seq       Int    @unique @default(autoincrement())
+  id         String   @id @default(uuid())
+  reference  String   @unique
+  name       String   @unique @map("nom")
+  allocated  Decimal  @db.Decimal(12, 2)
+  spent      Decimal  @default(0) @db.Decimal(12, 2) @map("depense")
+  supprimeLe DateTime?
+  creeLe     DateTime @default(now()) @map("cree_le")
+  modifieLe  DateTime @updatedAt @map("modifie_le")
 
   @@map("budgets")
 }
@@ -90,13 +102,15 @@ model Budget {
 // ───────────────────────── APPELS D'OFFRES ────────────────────────────
 
 model AppelOffres {
-  id            String   @id
+  id            String   @id @default(uuid())
+  reference     String   @unique
   title         String   @map("titre")
   department    String   @map("departement")
-  targetBudget  Float    @map("budget_cible")
+  targetBudget  Decimal  @db.Decimal(12, 2) @map("budget_cible")
   itemsRequired String   @map("besoins")
-  createdAt     DateTime @default(now()) @map("cree_le")
-  seq           Int      @unique @default(autoincrement())
+  supprimeLe    DateTime?
+  creeLe        DateTime @default(now()) @map("cree_le")
+  modifieLe     DateTime @updatedAt @map("modifie_le")
 
   bids Offre[]
 
@@ -104,16 +118,17 @@ model AppelOffres {
 }
 
 model Offre {
-  id              String   @id
+  id              String   @id @default(uuid())
   rfqId           String   @map("appel_offres_id")
   vendorName      String   @map("fournisseur_nom")
-  unitPrice       Float    @map("prix_unitaire")
-  totalPrice      Float    @map("prix_total")
+  unitPrice       Decimal  @db.Decimal(12, 2) @map("prix_unitaire")
+  totalPrice      Decimal  @db.Decimal(12, 2) @map("prix_total")
   leadTimeDays    Int      @map("delai_jours")
   warrantyYears   Int      @map("garantie_ans")
   complianceLevel String   @map("conformite")
   riskFlags       String[] @map("signaux_risque")
   notes           String   @default("")
+  creeLe          DateTime @default(now()) @map("cree_le")
 
   appelOffres AppelOffres @relation(fields: [rfqId], references: [id], onDelete: Cascade)
 
@@ -124,20 +139,22 @@ model Offre {
 // ────────────────────────────── UTILISATEURS ──────────────────────────
 
 model Utilisateur {
-  id               String   @id
-  name             String   @map("nom")
-  email            String   @unique
-  phone            String   @default("") @map("telephone")
-  department       String   @map("departement")
-  jobTitle         String   @map("fonction")
-  role             String
-  status           String
-  spendingLimitMAD Float    @map("plafond_depense_mad")
-  permissions      Json
-  avatarUrl        String   @default("") @map("url_avatar")
-  createdAt        String   @map("cree_le")
-  lastLogin        String   @map("derniere_connexion")
-  seq              Int      @unique @default(autoincrement())
+  id                String   @id @default(uuid())
+  reference         String   @unique
+  name              String   @map("nom")
+  email             String   @unique
+  phone             String   @default("") @map("telephone")
+  department        String   @map("departement")
+  jobTitle          String   @map("fonction")
+  role              String
+  status            String
+  spendingLimitMAD  Decimal  @default(0) @db.Decimal(12, 2) @map("plafond_depense_mad")
+  permissions       Json
+  avatarUrl         String   @default("") @map("url_avatar")
+  derniereConnexion DateTime?
+  supprimeLe        DateTime?
+  creeLe            DateTime @default(now()) @map("cree_le")
+  modifieLe         DateTime @updatedAt @map("modifie_le")
 
   @@map("utilisateurs")
 }
@@ -145,54 +162,61 @@ model Utilisateur {
 // ──────────────────────────── STOCK IT ────────────────────────────────
 
 model ArticleStock {
-  id                 String   @id
-  assetTag           String   @map("etiquette")
-  name               String   @map("nom")
-  category           String   @map("categorie")
-  brand              String   @map("marque")
+  id                 String    @id @default(uuid())
+  reference          String    @unique
+  assetTag           String    @map("etiquette")
+  name               String    @map("nom")
+  category           String    @map("categorie")
+  brand              String    @map("marque")
   model              String
-  serialNumber       String   @map("numero_serie")
+  serialNumber       String    @map("numero_serie")
   quantity           Int
-  availableQty       Int      @map("quantite_disponible")
-  allocatedQty       Int      @map("quantite_affectee")
-  minThreshold       Int      @map("seuil_minimum")
-  unitPriceMAD       Float    @map("prix_unitaire_mad")
-  totalValueMAD      Float    @map("valeur_totale_mad")
-  location           String   @map("emplacement")
+  availableQty       Int       @map("quantite_disponible")
+  allocatedQty       Int       @map("quantite_affectee")
+  minThreshold       Int       @map("seuil_minimum")
+  unitPriceMAD       Decimal   @db.Decimal(12, 2) @map("prix_unitaire_mad")
+  totalValueMAD      Decimal   @db.Decimal(12, 2) @map("valeur_totale_mad")
+  location           String    @map("emplacement")
   status             String
-  purchaseOrderId    String?  @map("bc_id")
-  purchaseOrderTitle String?  @map("bc_titre")
-  vendorName         String?  @map("fournisseur_nom")
-  purchaseDate       String?  @map("date_achat")
-  warrantyExpiry     String?  @map("fin_garantie")
-  assignedTo         Json?    @map("affecte_a")
+  purchaseOrderId    String?   @map("bc_id")
+  purchaseOrderTitle String?   @map("bc_titre")
+  vendorName         String?   @map("fournisseur_nom")
+  purchaseDate       DateTime? @map("date_achat")
+  warrantyExpiry     DateTime? @map("fin_garantie")
+  assignedTo         Json?     @map("affecte_a")
   specs              Json?
-  notes              String   @default("")
-  createdAt          DateTime @default(now()) @map("cree_le")
-  seq                Int      @unique @default(autoincrement())
+  notes              String    @default("")
+  supprimeLe         DateTime?
+  creeLe             DateTime  @default(now()) @map("cree_le")
+  modifieLe          DateTime  @updatedAt @map("modifie_le")
 
-  bonCommande BonCommande? @relation(fields: [purchaseOrderId], references: [id])
+  bonCommande BonCommande?     @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+  mouvements  MouvementStock[]
 
   @@index([category])
   @@index([status])
   @@map("articles_stock")
 }
 
-// Journal immuable : pas de modification ni suppression (01architecture.md §4.6).
+// Journal immuable : pas de modification ni suppression (AGENTS.md règle 3).
 model MouvementStock {
-  id              String   @id
-  stockItemId     String   @map("article_id")
+  id              String   @id @default(uuid())
+  reference       String   @unique
+  stockItemId     String?  @map("article_id")
   itemName        String   @map("article_nom")
   type            String
   quantity        Int
   performedBy     String   @map("effectue_par")
   recipient       String?  @map("destinataire")
   department      String?  @map("departement")
-  date            String
+  date            DateTime
   purchaseOrderId String?  @map("bc_id")
   notes           String   @default("")
-  createdAt       DateTime @default(now()) @map("cree_le")
-  seq             Int      @unique @default(autoincrement())
+  creeLe          DateTime @default(now()) @map("cree_le")
+
+  // L'historique survit aux suppressions parce que l'article est soft-deleted
+  // et que la FK interdit toute suppression physique (Restrict).
+  stockItem ArticleStock? @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
 
   @@index([stockItemId])
   @@map("mouvements_stock")
@@ -201,7 +225,7 @@ model MouvementStock {
 // ───────────────────────────── AFFECTATIONS ───────────────────────────
 
 model Affectation {
-  id                        String   @id
+  id                        String   @id @default(uuid())
   reference                 String   @unique
   templateType              String   @map("type_modele")
   formCode                  String?  @map("code_formulaire")
@@ -212,7 +236,7 @@ model Affectation {
   beneficiaryJobTitle       String   @map("beneficiaire_fonction")
   beneficiaryDepartment     String   @map("beneficiaire_departement")
   beneficiarySite           String   @map("beneficiaire_site")
-  assignedDate              String   @map("date_affectation")
+  assignedDate              DateTime @map("date_affectation")
   status                    String
   authorizedBy              String   @map("autorise_par")
   dsiTitle                  String   @map("intitule_dsi")
@@ -234,8 +258,8 @@ model Affectation {
   incidentRemarks           String?  @map("remarques_incident")
   termsAccepted             Boolean  @map("conditions_acceptees")
   notes                     String   @default("")
-  createdAt                 DateTime @default(now()) @map("cree_le")
-  seq                       Int      @unique @default(autoincrement())
+  creeLe                    DateTime @default(now()) @map("cree_le")
+  modifieLe                 DateTime @updatedAt @map("modifie_le")
 
   items        LigneAffectation[]
   returnRecord RetourAffectation?
@@ -245,18 +269,19 @@ model Affectation {
 }
 
 model LigneAffectation {
-  id            Int     @id @default(autoincrement())
-  assignmentId  String  @map("affectation_id")
-  stockItemId   String  @map("article_id")
-  assetTag      String  @map("etiquette")
-  name          String  @map("nom")
-  brand         String  @map("marque")
-  model         String
-  serialNumber  String  @map("numero_serie")
-  category      String  @map("categorie")
-  condition     String  @map("etat")
-  accessories   String[]
-  specs         Json?
+  id           Int     @id @default(autoincrement())
+  assignmentId String  @map("affectation_id")
+  stockItemId  String  @map("article_id") // instantané historique ; FK propre au chantier 6
+  assetTag     String  @map("etiquette")
+  name         String  @map("nom")
+  brand        String  @map("marque")
+  model        String
+  serialNumber String  @map("numero_serie")
+  category     String  @map("categorie")
+  condition    String  @map("etat")
+  accessories  String[]
+  specs        Json?
+  creeLe       DateTime @default(now()) @map("cree_le")
 
   affectation Affectation @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
@@ -265,20 +290,21 @@ model LigneAffectation {
 }
 
 model RetourAffectation {
-  id                  String  @id
-  assignmentId        String  @unique @map("affectation_id")
-  returnDate          String  @map("date_retour")
+  id                  String   @id @default(uuid())
+  assignmentId        String   @unique @map("affectation_id")
+  returnDate          DateTime @map("date_retour")
   cause               String
-  customCause         String  @default("") @map("cause_personnalisee")
-  equipmentCondition  String  @map("etat_equipement")
+  customCause         String   @default("") @map("cause_personnalisee")
+  equipmentCondition  String   @map("etat_equipement")
   accessoriesReturned String[] @map("accessoires_restitues")
   missingAccessories  String[] @map("accessoires_manquants")
-  dataWiped           Boolean @default(false) @map("donnees_effacees")
-  bitlockerUnlocked   Boolean @default(false) @map("bitlocker_deverrouille")
-  technicalDiagnosis  String  @default("") @map("diagnostic_technique")
-  actionTaken         String  @map("action_effectuee")
-  inspectedBy         String  @map("inspecte_par")
-  notes               String  @default("")
+  dataWiped           Boolean  @default(false) @map("donnees_effacees")
+  bitlockerUnlocked   Boolean  @default(false) @map("bitlocker_deverrouille")
+  technicalDiagnosis  String   @default("") @map("diagnostic_technique")
+  actionTaken         String   @map("action_effectuee")
+  inspectedBy         String   @map("inspecte_par")
+  notes               String   @default("")
+  creeLe              DateTime @default(now()) @map("cree_le")
 
   affectation Affectation @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 

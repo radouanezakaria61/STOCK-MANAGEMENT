@@ -172,7 +172,7 @@ monter("dashboard", rDashboard);
 monter("achats", rAchats);
 monter("fournisseurs", rFournisseurs);
 monter("appels-offres", rAppelsOffres);
-if (estActif("ia")) routerApi.use("/", iaRoutes); // module gelé
+monter("ia", iaRoutes); // module gelé : le stub 404 s'applique quand il est inactif
 
 monter("utilisateurs", rUtilisateurs);
 monter("stock", rStock);

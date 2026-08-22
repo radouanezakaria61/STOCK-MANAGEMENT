@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
-import { dateDans, dateDuJour } from "../lib/ids.js";
+import { dateFuture, numeroSuivant, pad3 } from "../lib/ids.js";
+import { enNombre } from "../lib/serialisation.js";
 
 export interface LigneCommandeEntree {
   desc: string;
@@ -26,7 +27,9 @@ export async function creerBonCommande(data: EntreeBonCommande) {
     throw requeteInvalide("Missing required fields for PO creation.");
   }
 
-  const vendor = await prisma.fournisseur.findUnique({ where: { id: vendorId } });
+  const vendor = await prisma.fournisseur.findFirst({
+    where: { OR: [{ id: vendorId }, { reference: vendorId }] }
+  });
   if (!vendor) throw introuvable("Selected supplier not found.");
 
   // Score d'audit : risque fournisseur, montant élevé, qualité insuffisante
@@ -36,23 +39,26 @@ export async function creerBonCommande(data: EntreeBonCommande) {
   if (Number(amount) > 50000) auditScore -= 10;
   if (vendor.qualityScore < 85) auditScore -= 10;
 
-  const count = await prisma.bonCommande.count();
+  const references = (
+    await prisma.bonCommande.findMany({ select: { reference: true } })
+  ).map((b) => b.reference);
+  const numero = numeroSuivant(references, /^DA-\d{4}-(\d+)$/);
   const montant = parseFloat(String(amount));
 
   const nouveau = await prisma.$transaction(async (tx) => {
     const bc = await tx.bonCommande.create({
       data: {
-        id: `PO-2026-00${count + 1}`,
+        reference: `DA-${new Date().getFullYear()}-${pad3(numero)}`,
         title,
-        vendorId,
+        vendorId: vendor.id,
         vendorName: vendor.name,
         amount: montant,
         category: vendor.category,
         department,
         requester,
         status: "Pending Approval",
-        createdDate: dateDuJour(),
-        deliveryDate: dateDans(30),
+        createdDate: new Date(),
+        deliveryDate: dateFuture(30),
         auditScore,
         notes: notes || "",
         items: { create: items || [] }
@@ -61,7 +67,7 @@ export async function creerBonCommande(data: EntreeBonCommande) {
     });
 
     // Imputation budgétaire : mise à jour ou création du budget du département.
-    // Écrites dans la même transaction que le bon de commande (01architecture.md §1.1).
+    // Écrites dans la même transaction que le bon de commande.
     const budgetExistant = await tx.budget.findUnique({ where: { name: department } });
     if (budgetExistant) {
       await tx.budget.update({
@@ -69,19 +75,22 @@ export async function creerBonCommande(data: EntreeBonCommande) {
         data: { spent: { increment: montant } }
       });
     } else {
-      const derniereSeq = await tx.budget.aggregate({ _max: { seq: true } });
+      const referencesBudgets = (
+        await tx.budget.findMany({ select: { reference: true }, where: { reference: { startsWith: "BUD-" } } })
+      ).map((b) => b.reference);
+      const numeroBudget = numeroSuivant(referencesBudgets, /^BUD-(\d+)$/);
       await tx.budget.create({
         data: {
+          reference: `BUD-${pad3(numeroBudget)}`,
           name: department,
           allocated: 100000,
-          spent: montant,
-          seq: (derniereSeq._max.seq ?? 0) + 1
+          spent: montant
         }
       });
     }
 
     await tx.fournisseur.update({
-      where: { id: vendorId },
+      where: { id: vendor.id },
       data: { totalSpend: { increment: montant } }
     });
 
@@ -93,12 +102,16 @@ export async function creerBonCommande(data: EntreeBonCommande) {
 
 const STATUTS_SORTIE_BUDGET = ["Declined", "Cancelled"];
 
-export async function changerStatutBonCommande(id: string, statut: string) {
+export async function changerStatutBonCommande(idOuReference: string, statut: string) {
   const misAJour = await prisma.$transaction(async (tx) => {
-    const po = await tx.bonCommande.findUnique({ where: { id }, include: { items: true } });
+    const po = await tx.bonCommande.findFirst({
+      where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
+      include: { items: true }
+    });
     if (!po) throw introuvable("Purchase Order not found.");
 
     const ancienStatut = po.status;
+    const montantPO = enNombre(po.amount);
 
     // Sortie du budget si rejet / annulation
     if (STATUTS_SORTIE_BUDGET.includes(statut) && !STATUTS_SORTIE_BUDGET.includes(ancienStatut)) {
@@ -106,7 +119,7 @@ export async function changerStatutBonCommande(id: string, statut: string) {
       if (budgetObj) {
         await tx.budget.update({
           where: { name: po.department },
-          data: { spent: Math.max(0, budgetObj.spent - po.amount) }
+          data: { spent: Math.max(0, enNombre(budgetObj.spent) - montantPO) }
         });
       }
       if (po.vendorId) {
@@ -114,7 +127,7 @@ export async function changerStatutBonCommande(id: string, statut: string) {
         if (vendor) {
           await tx.fournisseur.update({
             where: { id: vendor.id },
-            data: { totalSpend: Math.max(0, vendor.totalSpend - po.amount) }
+            data: { totalSpend: Math.max(0, enNombre(vendor.totalSpend) - montantPO) }
           });
         }
       }
@@ -125,7 +138,7 @@ export async function changerStatutBonCommande(id: string, statut: string) {
         if (budgetObj) {
           await tx.budget.update({
             where: { name: po.department },
-            data: { spent: budgetObj.spent + po.amount }
+            data: { spent: enNombre(budgetObj.spent) + montantPO }
           });
         }
         if (po.vendorId) {
@@ -133,7 +146,7 @@ export async function changerStatutBonCommande(id: string, statut: string) {
           if (vendor) {
             await tx.fournisseur.update({
               where: { id: vendor.id },
-              data: { totalSpend: vendor.totalSpend + po.amount }
+              data: { totalSpend: enNombre(vendor.totalSpend) + montantPO }
             });
           }
         }
@@ -141,7 +154,7 @@ export async function changerStatutBonCommande(id: string, statut: string) {
     }
 
     return tx.bonCommande.update({
-      where: { id },
+      where: { id: po.id },
       data: { status: statut },
       include: { items: true }
     });
@@ -151,8 +164,11 @@ export async function changerStatutBonCommande(id: string, statut: string) {
 }
 
 // Lecture partagée (utilisée par l'import de stock côté service Stock)
-export async function trouverBonCommande(id: string) {
-  return prisma.bonCommande.findUnique({ where: { id }, include: { items: true } });
+export async function trouverBonCommande(idOuReference: string) {
+  return prisma.bonCommande.findFirst({
+    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
+    include: { items: true }
+  });
 }
 
 export async function marquerCommeLivre(id: string) {

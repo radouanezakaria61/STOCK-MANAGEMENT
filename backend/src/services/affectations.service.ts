@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
-import { dateDuJour, pad3 } from "../lib/ids.js";
+import { dateDuJour, numeroSuivant, pad3, versDate } from "../lib/ids.js";
+import { nouvelleReferenceMouvement } from "./stock.service.js";
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -8,7 +9,7 @@ type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export async function listerAffectations() {
   return prisma.affectation.findMany({
-    orderBy: { seq: "desc" },
+    orderBy: { creeLe: "desc" },
     include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
   });
 }
@@ -69,18 +70,22 @@ interface LigneConstruite {
   accessories: string[];
 }
 
-async function prochainsNumeros(tx: Tx) {
-  const refs = await tx.affectation.findMany({ select: { id: true, reference: true } });
-  let max = 0;
-  for (const r of refs) {
-    const m = (r.reference || r.id).match(/AFF-2026-(\d+)$/);
-    if (m && m[1]) {
-      const n = parseInt(m[1], 10);
-      if (!isNaN(n) && n > max) max = n;
-    }
-  }
-  const numero = max + 1;
-  return { id: `AFF-2026-${pad3(numero)}`, reference: `AFF-DSI-2026-${pad3(numero)}` };
+// Génère la référence métier AFF-DSI-2026-NNN en se basant sur les
+// références existantes. On matche le suffixe numérique quelle que soit
+// l'année ou le préfixe pour éviter les collisions.
+async function prochaineReference(tx: Tx): Promise<string> {
+  const refs = await tx.affectation.findMany({ select: { reference: true } });
+  const numero = numeroSuivant(
+    refs.map((r) => r.reference),
+    /(\d+)$/
+  );
+  return `AFF-DSI-2026-${pad3(numero)}`;
+}
+
+async function trouverArticle(tx: Tx, identifiant: string) {
+  return tx.articleStock.findFirst({
+    where: { OR: [{ id: identifiant }, { reference: identifiant }] }
+  });
 }
 
 export async function creerAffectation(data: EntreeAffectation) {
@@ -122,12 +127,17 @@ export async function creerAffectation(data: EntreeAffectation) {
     );
   }
 
-  // Validation stricte : tous les articles doivent être disponibles AVANT écriture
+  const dateAffectation = versDate(assignedDate) ?? new Date();
+
+  // Résolution des articles AVANT écriture : référence ou UUID acceptés,
+  // disponibilité contrôlée strictement avant toute mutation.
+  const articlesResolus = new Map<string, NonNullable<Awaited<ReturnType<typeof trouverArticle>>>>();
+
   if (Array.isArray(items) && items.length > 0) {
     for (const itemInput of items) {
       if (itemInput.stockItemId && itemInput.stockItemId !== "STK-DIRECT") {
-        const stockItem = await prisma.articleStock.findUnique({
-          where: { id: itemInput.stockItemId }
+        const stockItem = await prisma.articleStock.findFirst({
+          where: { OR: [{ id: itemInput.stockItemId }, { reference: itemInput.stockItemId }] }
         });
         if (!stockItem) {
           throw requeteInvalide(
@@ -139,18 +149,22 @@ export async function creerAffectation(data: EntreeAffectation) {
             `Le matériel « ${stockItem.name} » (${stockItem.serialNumber || stockItem.assetTag}) n'est plus disponible en stock (Quantité disponible : 0).`
           );
         }
+        articlesResolus.set(itemInput.stockItemId, stockItem);
       }
     }
   }
 
   const nouvelle = await prisma.$transaction(async (tx) => {
-    const numeros = await prochainsNumeros(tx);
+    const reference = await prochaineReference(tx);
     const lignesConstruites: LigneConstruite[] = [];
 
     if (Array.isArray(items) && items.length > 0) {
       for (const itemInput of items) {
         const stockItem = itemInput.stockItemId
-          ? await tx.articleStock.findUnique({ where: { id: itemInput.stockItemId } })
+          ? articlesResolus.get(itemInput.stockItemId) ??
+            (itemInput.stockItemId === "STK-DIRECT"
+              ? null
+              : await trouverArticle(tx, itemInput.stockItemId))
           : null;
         if (stockItem && itemInput.stockItemId !== "STK-DIRECT") {
           if (stockItem.availableQty > 0) {
@@ -164,14 +178,14 @@ export async function creerAffectation(data: EntreeAffectation) {
                 assignedTo: {
                   userName: beneficiaryName,
                   department: beneficiaryDepartment,
-                  assignedDate: assignedDate || dateDuJour()
+                  assignedDate: dateDuJour()
                 }
               }
             });
 
             lignesConstruites.push({
               stockItemId: stockItem.id,
-              assetTag: stockItem.assetTag || itemInput.assetTag || `IT-${stockItem.id}`,
+              assetTag: stockItem.assetTag || itemInput.assetTag || `IT-${stockItem.reference}`,
               name: stockItem.name,
               brand: stockItem.brand,
               model: stockItem.model,
@@ -188,7 +202,7 @@ export async function creerAffectation(data: EntreeAffectation) {
 
             await tx.mouvementStock.create({
               data: {
-                id: `MVT-00${(await tx.mouvementStock.count()) + 1}`,
+                reference: await nouvelleReferenceMouvement(tx),
                 stockItemId: stockItem.id,
                 itemName: stockItem.name,
                 type: "Sortie Affectation",
@@ -196,8 +210,8 @@ export async function creerAffectation(data: EntreeAffectation) {
                 performedBy: authorizedBy || "Zakaria Radouane (DSI)",
                 recipient: beneficiaryName,
                 department: beneficiaryDepartment,
-                date: assignedDate || dateDuJour(),
-                notes: `Affectation matérielle (${numeros.reference}) - ${beneficiaryJobTitle || "Collaborateur"}`
+                date: dateAffectation,
+                notes: `Affectation matérielle (${reference}) - ${beneficiaryJobTitle || "Collaborateur"}`
               }
             });
           }
@@ -220,7 +234,7 @@ export async function creerAffectation(data: EntreeAffectation) {
 
     return tx.affectation.create({
       data: {
-        ...numeros,
+        reference,
         templateType:
           templateType ||
           (resourceType?.includes("SIM") || resourceType?.includes("SmartPhone")
@@ -234,7 +248,7 @@ export async function creerAffectation(data: EntreeAffectation) {
         beneficiaryJobTitle: beneficiaryJobTitle || "Collaborateur",
         beneficiaryDepartment,
         beneficiarySite: beneficiarySite || "Berrechid",
-        assignedDate: assignedDate || dateDuJour(),
+        assignedDate: dateAffectation,
         status: "Active",
         authorizedBy: authorizedBy || "Directeur Systèmes d'Information",
         dsiTitle: dsiTitle || "Département Systèmes D'Information",
@@ -302,7 +316,7 @@ export interface EntreeRetour {
   notes?: string;
 }
 
-export async function restituerAffectation(id: string, data: EntreeRetour) {
+export async function restituerAffectation(idOuReference: string, data: EntreeRetour) {
   const {
     returnDate,
     cause,
@@ -318,18 +332,19 @@ export async function restituerAffectation(id: string, data: EntreeRetour) {
     notes
   } = data;
 
+  const dateRetour = versDate(returnDate) ?? new Date();
+
   const resultat = await prisma.$transaction(async (tx) => {
-    const affectation = await tx.affectation.findUnique({
-      where: { id },
+    const affectation = await tx.affectation.findFirst({
+      where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
       include: { items: { orderBy: { id: "asc" } } }
     });
     if (!affectation) throw introuvable("Fiche d'affectation introuvable.");
 
     const retour = await tx.retourAffectation.create({
       data: {
-        id: `RET-2026-${Math.floor(Math.random() * 900) + 100}`,
         assignmentId: affectation.id,
-        returnDate: returnDate || dateDuJour(),
+        returnDate: dateRetour,
         cause: cause || "Départ collaborateur (Fin de contrat / Démission)",
         customCause: customCause || "",
         equipmentCondition: equipmentCondition || "Bon état d'usage",
@@ -345,7 +360,7 @@ export async function restituerAffectation(id: string, data: EntreeRetour) {
     });
 
     await tx.affectation.update({
-      where: { id },
+      where: { id: affectation.id },
       data: { status: "Restitué" }
     });
 
@@ -375,7 +390,7 @@ export async function restituerAffectation(id: string, data: EntreeRetour) {
 
       await tx.mouvementStock.create({
         data: {
-          id: `MVT-00${(await tx.mouvementStock.count()) + 1}`,
+          reference: await nouvelleReferenceMouvement(tx),
           stockItemId: stockItem.id,
           itemName: stockItem.name,
           type: actionTaken === "Mise au rebut" ? "Mise au Rebut" : "Retour Stock",
@@ -383,14 +398,14 @@ export async function restituerAffectation(id: string, data: EntreeRetour) {
           performedBy: inspectedBy || "Zakaria Radouane (DSI)",
           recipient: "Magasin Central IT",
           department: affectation.beneficiaryDepartment,
-          date: returnDate || dateDuJour(),
+          date: dateRetour,
           notes: `Restitution (${cause}) - État: ${equipmentCondition}. ${actionTaken}.`
         }
       });
     }
 
     const assignmentMisAJour = await tx.affectation.findUnique({
-      where: { id },
+      where: { id: affectation.id },
       include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
     });
 
@@ -407,11 +422,16 @@ export async function restituerAffectation(id: string, data: EntreeRetour) {
 }
 
 // ── Suppression ───────────────────────────────────────────────────────
+// Suppression physique assumée : la fiche disparaît avec ses lignes et son
+// éventuel retour (cascades), mais les mouvements de stock associés sont
+// conservés (FK vers ArticleStock uniquement).
 
-export async function supprimerAffectation(id: string) {
-  const affectation = await prisma.affectation.findUnique({ where: { id } });
+export async function supprimerAffectation(idOuReference: string) {
+  const affectation = await prisma.affectation.findFirst({
+    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
+  });
   if (!affectation) throw introuvable("Affectation introuvable.");
 
-  await prisma.affectation.delete({ where: { id } });
+  await prisma.affectation.delete({ where: { id: affectation.id } });
   return { message: "Fiche d'affectation supprimée." };
 }

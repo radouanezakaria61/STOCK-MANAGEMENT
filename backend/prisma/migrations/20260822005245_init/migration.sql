@@ -1,6 +1,7 @@
 -- CreateTable
 CREATE TABLE "fournisseurs" (
     "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
     "contact" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -8,11 +9,12 @@ CREATE TABLE "fournisseurs" (
     "score_qualite" INTEGER NOT NULL,
     "taux_ponctualite" INTEGER NOT NULL,
     "contrats_actifs" INTEGER NOT NULL DEFAULT 0,
-    "depense_totale" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "depense_totale" DECIMAL(12,2) NOT NULL DEFAULT 0,
     "niveau_risque" TEXT NOT NULL DEFAULT 'Low',
     "status" TEXT NOT NULL DEFAULT 'Approved',
+    "supprimeLe" TIMESTAMP(3),
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "fournisseurs_pkey" PRIMARY KEY ("id")
 );
@@ -20,20 +22,22 @@ CREATE TABLE "fournisseurs" (
 -- CreateTable
 CREATE TABLE "bons_commande" (
     "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "titre" TEXT NOT NULL,
     "fournisseur_id" TEXT,
     "fournisseur_nom" TEXT NOT NULL,
-    "montant" DOUBLE PRECISION NOT NULL,
+    "montant" DECIMAL(12,2) NOT NULL,
     "categorie" TEXT NOT NULL,
     "departement" TEXT NOT NULL,
     "demandeur" TEXT NOT NULL,
     "status" TEXT NOT NULL,
-    "date_creation" TEXT NOT NULL,
-    "date_livraison" TEXT NOT NULL,
+    "date_creation" TIMESTAMP(3) NOT NULL,
+    "date_livraison" TIMESTAMP(3) NOT NULL,
     "score_audit" INTEGER NOT NULL,
     "notes" TEXT NOT NULL DEFAULT '',
+    "supprimeLe" TIMESTAMP(3),
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "bons_commande_pkey" PRIMARY KEY ("id")
 );
@@ -44,31 +48,38 @@ CREATE TABLE "lignes_commande" (
     "bc_id" TEXT NOT NULL,
     "desc" TEXT NOT NULL,
     "qty" INTEGER NOT NULL,
-    "prix_unitaire" DOUBLE PRECISION NOT NULL,
-    "total" DOUBLE PRECISION NOT NULL,
+    "prix_unitaire" DECIMAL(12,2) NOT NULL,
+    "total" DECIMAL(12,2) NOT NULL,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "lignes_commande_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "budgets" (
+    "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
-    "allocated" DOUBLE PRECISION NOT NULL,
-    "depense" DOUBLE PRECISION NOT NULL,
-    "seq" SERIAL NOT NULL,
+    "allocated" DECIMAL(12,2) NOT NULL,
+    "depense" DECIMAL(12,2) NOT NULL DEFAULT 0,
+    "supprimeLe" TIMESTAMP(3),
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "budgets_pkey" PRIMARY KEY ("nom")
+    CONSTRAINT "budgets_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "appels_offres" (
     "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "titre" TEXT NOT NULL,
     "departement" TEXT NOT NULL,
-    "budget_cible" DOUBLE PRECISION NOT NULL,
+    "budget_cible" DECIMAL(12,2) NOT NULL,
     "besoins" TEXT NOT NULL,
+    "supprimeLe" TIMESTAMP(3),
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "appels_offres_pkey" PRIMARY KEY ("id")
 );
@@ -78,13 +89,14 @@ CREATE TABLE "offres" (
     "id" TEXT NOT NULL,
     "appel_offres_id" TEXT NOT NULL,
     "fournisseur_nom" TEXT NOT NULL,
-    "prix_unitaire" DOUBLE PRECISION NOT NULL,
-    "prix_total" DOUBLE PRECISION NOT NULL,
+    "prix_unitaire" DECIMAL(12,2) NOT NULL,
+    "prix_total" DECIMAL(12,2) NOT NULL,
     "delai_jours" INTEGER NOT NULL,
     "garantie_ans" INTEGER NOT NULL,
     "conformite" TEXT NOT NULL,
     "signaux_risque" TEXT[],
     "notes" TEXT NOT NULL DEFAULT '',
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "offres_pkey" PRIMARY KEY ("id")
 );
@@ -92,6 +104,7 @@ CREATE TABLE "offres" (
 -- CreateTable
 CREATE TABLE "utilisateurs" (
     "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "telephone" TEXT NOT NULL DEFAULT '',
@@ -99,12 +112,13 @@ CREATE TABLE "utilisateurs" (
     "fonction" TEXT NOT NULL,
     "role" TEXT NOT NULL,
     "status" TEXT NOT NULL,
-    "plafond_depense_mad" DOUBLE PRECISION NOT NULL,
+    "plafond_depense_mad" DECIMAL(12,2) NOT NULL DEFAULT 0,
     "permissions" JSONB NOT NULL,
     "url_avatar" TEXT NOT NULL DEFAULT '',
-    "cree_le" TEXT NOT NULL,
-    "derniere_connexion" TEXT NOT NULL,
-    "seq" SERIAL NOT NULL,
+    "derniereConnexion" TIMESTAMP(3),
+    "supprimeLe" TIMESTAMP(3),
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "utilisateurs_pkey" PRIMARY KEY ("id")
 );
@@ -112,6 +126,7 @@ CREATE TABLE "utilisateurs" (
 -- CreateTable
 CREATE TABLE "articles_stock" (
     "id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
     "etiquette" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
     "categorie" TEXT NOT NULL,
@@ -122,20 +137,21 @@ CREATE TABLE "articles_stock" (
     "quantite_disponible" INTEGER NOT NULL,
     "quantite_affectee" INTEGER NOT NULL,
     "seuil_minimum" INTEGER NOT NULL,
-    "prix_unitaire_mad" DOUBLE PRECISION NOT NULL,
-    "valeur_totale_mad" DOUBLE PRECISION NOT NULL,
+    "prix_unitaire_mad" DECIMAL(12,2) NOT NULL,
+    "valeur_totale_mad" DECIMAL(12,2) NOT NULL,
     "emplacement" TEXT NOT NULL,
     "status" TEXT NOT NULL,
     "bc_id" TEXT,
     "bc_titre" TEXT,
     "fournisseur_nom" TEXT,
-    "date_achat" TEXT,
-    "fin_garantie" TEXT,
+    "date_achat" TIMESTAMP(3),
+    "fin_garantie" TIMESTAMP(3),
     "affecte_a" JSONB,
     "specs" JSONB,
     "notes" TEXT NOT NULL DEFAULT '',
+    "supprimeLe" TIMESTAMP(3),
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "articles_stock_pkey" PRIMARY KEY ("id")
 );
@@ -143,18 +159,18 @@ CREATE TABLE "articles_stock" (
 -- CreateTable
 CREATE TABLE "mouvements_stock" (
     "id" TEXT NOT NULL,
-    "article_id" TEXT NOT NULL,
+    "reference" TEXT NOT NULL,
+    "article_id" TEXT,
     "article_nom" TEXT NOT NULL,
     "type" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
     "effectue_par" TEXT NOT NULL,
     "destinataire" TEXT,
     "departement" TEXT,
-    "date" TEXT NOT NULL,
+    "date" TIMESTAMP(3) NOT NULL,
     "bc_id" TEXT,
     "notes" TEXT NOT NULL DEFAULT '',
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
 
     CONSTRAINT "mouvements_stock_pkey" PRIMARY KEY ("id")
 );
@@ -172,7 +188,7 @@ CREATE TABLE "affectations" (
     "beneficiaire_fonction" TEXT NOT NULL,
     "beneficiaire_departement" TEXT NOT NULL,
     "beneficiaire_site" TEXT NOT NULL,
-    "date_affectation" TEXT NOT NULL,
+    "date_affectation" TIMESTAMP(3) NOT NULL,
     "status" TEXT NOT NULL,
     "autorise_par" TEXT NOT NULL,
     "intitule_dsi" TEXT NOT NULL,
@@ -194,7 +210,7 @@ CREATE TABLE "affectations" (
     "conditions_acceptees" BOOLEAN NOT NULL,
     "notes" TEXT NOT NULL DEFAULT '',
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "seq" SERIAL NOT NULL,
+    "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "affectations_pkey" PRIMARY KEY ("id")
 );
@@ -213,6 +229,7 @@ CREATE TABLE "lignes_affectation" (
     "etat" TEXT NOT NULL,
     "accessories" TEXT[],
     "specs" JSONB,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "lignes_affectation_pkey" PRIMARY KEY ("id")
 );
@@ -221,7 +238,7 @@ CREATE TABLE "lignes_affectation" (
 CREATE TABLE "retours_affectation" (
     "id" TEXT NOT NULL,
     "affectation_id" TEXT NOT NULL,
-    "date_retour" TEXT NOT NULL,
+    "date_retour" TIMESTAMP(3) NOT NULL,
     "cause" TEXT NOT NULL,
     "cause_personnalisee" TEXT NOT NULL DEFAULT '',
     "etat_equipement" TEXT NOT NULL,
@@ -233,15 +250,16 @@ CREATE TABLE "retours_affectation" (
     "action_effectuee" TEXT NOT NULL,
     "inspecte_par" TEXT NOT NULL,
     "notes" TEXT NOT NULL DEFAULT '',
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "retours_affectation_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "fournisseurs_seq_key" ON "fournisseurs"("seq");
+CREATE UNIQUE INDEX "fournisseurs_reference_key" ON "fournisseurs"("reference");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "bons_commande_seq_key" ON "bons_commande"("seq");
+CREATE UNIQUE INDEX "bons_commande_reference_key" ON "bons_commande"("reference");
 
 -- CreateIndex
 CREATE INDEX "bons_commande_fournisseur_id_idx" ON "bons_commande"("fournisseur_id");
@@ -250,22 +268,25 @@ CREATE INDEX "bons_commande_fournisseur_id_idx" ON "bons_commande"("fournisseur_
 CREATE INDEX "lignes_commande_bc_id_idx" ON "lignes_commande"("bc_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "budgets_seq_key" ON "budgets"("seq");
+CREATE UNIQUE INDEX "budgets_reference_key" ON "budgets"("reference");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "appels_offres_seq_key" ON "appels_offres"("seq");
+CREATE UNIQUE INDEX "budgets_nom_key" ON "budgets"("nom");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "appels_offres_reference_key" ON "appels_offres"("reference");
 
 -- CreateIndex
 CREATE INDEX "offres_appel_offres_id_idx" ON "offres"("appel_offres_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "utilisateurs_reference_key" ON "utilisateurs"("reference");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "utilisateurs_email_key" ON "utilisateurs"("email");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "utilisateurs_seq_key" ON "utilisateurs"("seq");
-
--- CreateIndex
-CREATE UNIQUE INDEX "articles_stock_seq_key" ON "articles_stock"("seq");
+CREATE UNIQUE INDEX "articles_stock_reference_key" ON "articles_stock"("reference");
 
 -- CreateIndex
 CREATE INDEX "articles_stock_categorie_idx" ON "articles_stock"("categorie");
@@ -274,16 +295,13 @@ CREATE INDEX "articles_stock_categorie_idx" ON "articles_stock"("categorie");
 CREATE INDEX "articles_stock_status_idx" ON "articles_stock"("status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "mouvements_stock_seq_key" ON "mouvements_stock"("seq");
+CREATE UNIQUE INDEX "mouvements_stock_reference_key" ON "mouvements_stock"("reference");
 
 -- CreateIndex
 CREATE INDEX "mouvements_stock_article_id_idx" ON "mouvements_stock"("article_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "affectations_reference_key" ON "affectations"("reference");
-
--- CreateIndex
-CREATE UNIQUE INDEX "affectations_seq_key" ON "affectations"("seq");
 
 -- CreateIndex
 CREATE INDEX "affectations_status_idx" ON "affectations"("status");
@@ -305,6 +323,9 @@ ALTER TABLE "offres" ADD CONSTRAINT "offres_appel_offres_id_fkey" FOREIGN KEY ("
 
 -- AddForeignKey
 ALTER TABLE "articles_stock" ADD CONSTRAINT "articles_stock_bc_id_fkey" FOREIGN KEY ("bc_id") REFERENCES "bons_commande"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "mouvements_stock" ADD CONSTRAINT "mouvements_stock_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "articles_stock"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "lignes_affectation" ADD CONSTRAINT "lignes_affectation_affectation_id_fkey" FOREIGN KEY ("affectation_id") REFERENCES "affectations"("id") ON DELETE CASCADE ON UPDATE CASCADE;

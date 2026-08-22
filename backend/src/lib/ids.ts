@@ -1,23 +1,37 @@
-// Aides à la génération d'identifiants métier lisibles (DA-2026-001, STK-008…).
-// Les identifiants sont des références affichées aux utilisateurs : ils restent
-// donc séquentiels et formatés comme dans l'application d'origine.
+// Aides dates & références métier lisibles (DA-2026-001, STK-008…).
+// Chantier 1 : les dates métier sont des DateTime ; les chaînes ISO
+// ne subsistent que dans les champs JSON d'affichage (assignedTo…).
 
-export function dateDuJour(): string {
-  return new Date().toISOString().split("T")[0]!;
+/** Maintenant, en Date. */
+export function maintenant(): Date {
+  return new Date();
 }
 
-export function dateDans(days: number): string {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().split("T")[0]!;
+/** Dans n jours, en Date (midi UTC pour éviter tout décalage de fuseau). */
+export function dateFuture(days: number): Date {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+}
+
+/** Date du jour au format ISO court (réservée aux chaînes d'affichage JSON). */
+export function dateDuJour(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Convertit une entrée « yyyy-MM-dd » (formulaire) en Date midi UTC. */
+export function versDate(iso?: string | null): Date | undefined {
+  if (!iso) return undefined;
+  const d = new Date(`${iso}T12:00:00Z`);
+  return isNaN(d.getTime()) ? undefined : d;
 }
 
 /**
- * Retourne le prochain numéro libre à partir des identifiants existants.
- * Résiste aux suppressions (contrairement à un simple comptage de lignes).
+ * Retourne le prochain numéro libre à partir des références existantes.
+ * Résiste aux suppressions soft (contrairement à un simple comptage de lignes).
  */
-export function numeroSuivant(existingIds: string[], matcher: RegExp): number {
+export function numeroSuivant(references: string[], matcher: RegExp): number {
   let max = 0;
-  for (const id of existingIds) {
-    const match = id.match(matcher);
+  for (const ref of references) {
+    const match = ref.match(matcher);
     if (match && match[1]) {
       const n = parseInt(match[1], 10);
       if (!isNaN(n) && n > max) max = n;

@@ -1,10 +1,19 @@
 import express from "express";
 import path from "path";
 import { routerApi, gestionnaireErreurs, verifierBase } from "./routes/index.js";
+import { serialiser } from "./lib/serialisation.js";
 
 const app = express();
 
 app.use(express.json());
+
+// Sérialisation unique des réponses API : Decimal → nombre, dates,
+// renommages (creeLe → createdAt, derniereConnexion → lastLogin).
+app.use("/api", (req, res, next) => {
+  const jsonOriginal = res.json.bind(res);
+  res.json = ((body: unknown) => jsonOriginal(serialiser(body))) as typeof res.json;
+  next();
+});
 
 // Point d'entrée unique de l'API — le serveur est la seule source de vérité.
 app.use("/api", routerApi);

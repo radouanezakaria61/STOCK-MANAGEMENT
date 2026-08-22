@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { requeteInvalide } from "../lib/erreurs.js";
+import { numeroSuivant } from "../lib/ids.js";
 
 export interface EntreeOffre {
   vendorName?: string;
@@ -29,19 +30,20 @@ export async function creerAppelOffres(data: EntreeAppelOffres) {
     );
   }
 
-  const total = await prisma.appelOffres.count();
-  const numeroPool = total + 1;
+  const references = (
+    await prisma.appelOffres.findMany({ select: { reference: true }, where: { reference: { startsWith: "rfq-" } } })
+  ).map((r) => r.reference);
+  const numeroPool = numeroSuivant(references, /^rfq-(\d+)$/);
 
   const nouveau = await prisma.appelOffres.create({
     data: {
-      id: `rfq-${numeroPool}`,
+      reference: `rfq-${numeroPool}`,
       title,
       department: department || "Supply Chain",
       targetBudget: parseFloat(String(targetBudget)) || 20000,
       itemsRequired,
       bids: {
-        create: bids.map((b, index) => ({
-          id: `bid-${numeroPool}-${index + 1}`,
+        create: bids.map((b) => ({
           vendorName: b.vendorName ?? "",
           unitPrice: parseFloat(String(b.unitPrice)) || 0,
           totalPrice: (parseFloat(String(b.unitPrice)) || 0) * (Number(b.qty) || 1),
@@ -53,7 +55,7 @@ export async function creerAppelOffres(data: EntreeAppelOffres) {
         }))
       }
     },
-    include: { bids: true }
+    include: { bids: { orderBy: { creeLe: "asc" } } }
   });
 
   return { status: 201 as const, message: "RFQ comparative simulation added.", data: nouveau };

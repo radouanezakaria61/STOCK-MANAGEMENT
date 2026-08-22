@@ -11,21 +11,21 @@ export async function obtenirDonneesGlobales() {
     stockMovements,
     assignments
   ] = await Promise.all([
-    prisma.fournisseur.findMany({ orderBy: { seq: "desc" } }),
+    prisma.fournisseur.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.bonCommande.findMany({
-      orderBy: { seq: "desc" },
+      orderBy: { creeLe: "desc" },
       include: { items: { orderBy: { id: "asc" } } }
     }),
-    prisma.budget.findMany({ orderBy: { seq: "asc" } }),
+    prisma.budget.findMany({ orderBy: { creeLe: "asc" } }),
     prisma.appelOffres.findMany({
-      orderBy: { seq: "desc" },
-      include: { bids: { orderBy: { id: "asc" } } }
+      orderBy: { creeLe: "desc" },
+      include: { bids: { orderBy: { creeLe: "asc" } } }
     }),
-    prisma.utilisateur.findMany({ orderBy: { seq: "desc" } }),
-    prisma.articleStock.findMany({ orderBy: { seq: "desc" } }),
-    prisma.mouvementStock.findMany({ orderBy: { seq: "desc" } }),
+    prisma.utilisateur.findMany({ orderBy: { creeLe: "desc" } }),
+    prisma.articleStock.findMany({ orderBy: { creeLe: "desc" } }),
+    prisma.mouvementStock.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.affectation.findMany({
-      orderBy: { seq: "desc" },
+      orderBy: { creeLe: "desc" },
       include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
     })
   ]);

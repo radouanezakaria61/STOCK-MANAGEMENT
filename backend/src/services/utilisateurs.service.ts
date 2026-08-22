@@ -1,8 +1,9 @@
-import { prisma } from "../lib/prisma.js";
+﻿import { prisma } from "../lib/prisma.js";
 import { conflit, introuvable, requeteInvalide } from "../lib/erreurs.js";
-import { dateDuJour, numeroSuivant } from "../lib/ids.js";
+import { numeroSuivant } from "../lib/ids.js";
 
 // Matrice des permissions par défaut selon le rôle (héritée de l'existant).
+// Remplacée par le RBAC serveur au chantier 2 — ne pas étendre.
 const PERMISSIONS_DEFAUT: Record<string, Record<string, boolean>> = {
   ADMIN: {
     canCreatePO: true,
@@ -58,10 +59,17 @@ function plafondParDefaut(role: string): number {
   if (role === "ADMIN") return 1000000;
   if (role === "PROCUREMENT_MANAGER") return 300000;
   return 50000;
+
+}
+
+async function trouverUtilisateur(idOuReference: string) {
+  return prisma.utilisateur.findFirst({
+    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
+  });
 }
 
 export async function listerUtilisateurs() {
-  const utilisateurs = await prisma.utilisateur.findMany({ orderBy: { seq: "desc" } });
+  const utilisateurs = await prisma.utilisateur.findMany({ orderBy: { creeLe: "desc" } });
   return utilisateurs;
 }
 
@@ -96,14 +104,14 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
     PERMISSIONS_DEFAUT[roleFinal] ||
     PERMISSIONS_DEFAUT["BUYER"]!;
 
-  const idsExistants = (
-    await prisma.utilisateur.findMany({ select: { id: true }, where: { id: { startsWith: "usr-" } } })
-  ).map((u) => u.id);
-  const numero = numeroSuivant(idsExistants, /^usr-(\d+)$/);
+  const referencesExistantes = (
+    await prisma.utilisateur.findMany({ select: { reference: true }, where: { reference: { startsWith: "usr-" } } })
+  ).map((u) => u.reference);
+  const numero = numeroSuivant(referencesExistantes, /^usr-(\d+)$/);
 
   const nouveau = await prisma.utilisateur.create({
     data: {
-      id: `usr-${numero}`,
+      reference: `usr-${numero}`,
       name,
       email,
       phone: phone || "",
@@ -114,17 +122,15 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
       spendingLimitMAD:
         spendingLimitMAD !== undefined ? Number(spendingLimitMAD) : plafondParDefaut(roleFinal),
       permissions: permissionsFinales,
-      avatarUrl: "",
-      createdAt: dateDuJour(),
-      lastLogin: "Non connecté"
+      avatarUrl: ""
     }
   });
 
   return { status: 201 as const, message: "Utilisateur créé avec succès.", data: nouveau };
 }
 
-export async function modifierUtilisateur(id: string, data: EntreeUtilisateur) {
-  const utilisateur = await prisma.utilisateur.findUnique({ where: { id } });
+export async function modifierUtilisateur(idOuReference: string, data: EntreeUtilisateur) {
+  const utilisateur = await trouverUtilisateur(idOuReference);
   if (!utilisateur) throw introuvable("Utilisateur introuvable.");
 
   const donnees: Record<string, unknown> = {};
@@ -142,12 +148,12 @@ export async function modifierUtilisateur(id: string, data: EntreeUtilisateur) {
     donnees["permissions"] = { ...actuelles, ...data.permissions };
   }
 
-  const misAJour = await prisma.utilisateur.update({ where: { id }, data: donnees });
+  const misAJour = await prisma.utilisateur.update({ where: { id: utilisateur.id }, data: donnees });
   return { message: "Utilisateur mis à jour avec succès.", data: misAJour };
 }
 
-export async function changerStatutUtilisateur(id: string, statut: string) {
-  const utilisateur = await prisma.utilisateur.findUnique({ where: { id } });
+export async function changerStatutUtilisateur(idOuReference: string, statut: string) {
+  const utilisateur = await trouverUtilisateur(idOuReference);
   if (!utilisateur) throw introuvable("Utilisateur introuvable.");
 
   // Empêche la désactivation du dernier administrateur actif
@@ -163,14 +169,14 @@ export async function changerStatutUtilisateur(id: string, statut: string) {
   }
 
   const misAJour = await prisma.utilisateur.update({
-    where: { id },
+    where: { id: utilisateur.id },
     data: { status: statut }
   });
   return { message: `Statut utilisateur modifié en ${statut}.`, data: misAJour };
 }
 
-export async function supprimerUtilisateur(id: string) {
-  const utilisateur = await prisma.utilisateur.findUnique({ where: { id } });
+export async function supprimerUtilisateur(idOuReference: string) {
+  const utilisateur = await trouverUtilisateur(idOuReference);
   if (!utilisateur) throw introuvable("Utilisateur introuvable.");
 
   if (utilisateur.role === "ADMIN") {
@@ -180,6 +186,10 @@ export async function supprimerUtilisateur(id: string) {
     }
   }
 
-  await prisma.utilisateur.delete({ where: { id } });
+  // Soft delete : l'historique et les références restent intacts.
+  await prisma.utilisateur.update({
+    where: { id: utilisateur.id },
+    data: { supprimeLe: new Date(), status: "Inactif" }
+  });
   return { message: "Utilisateur supprimé avec succès." };
 }

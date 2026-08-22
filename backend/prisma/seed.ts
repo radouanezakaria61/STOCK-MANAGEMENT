@@ -2,14 +2,30 @@
  * Seed — données de démonstration.
  * Reproduit à l'identique l'état en mémoire de l'ancien server.ts monolithique.
  *
- * Ordre d'insertion inversé (sauf budgets) : `seq` étant un auto-incrément et
- * les lectures triant par seq décroissant, insérer en ordre inverse reproduit
- * la sémantique « unshift » de l'ancien état en mémoire.
+ * Identifiants : PK = UUID générés ; `reference` reprend les anciens ids
+ * lisibles (v-1, DA-2026-001, STK-001…). Les clés étrangères sont résolues
+ * via des maps référence → uuid.
+ *
+ * Ordre d'insertion inversé (sauf budgets) : `creeLe` étant horodaté à
+ * l'insertion (compteur partagé croissant) et les lectures triant par
+ * creeLe décroissant, insérer en ordre inverse reproduit la sémantique
+ * « unshift » de l'ancien état en mémoire.
  */
 import "dotenv/config";
+import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+
+// Horloge déterministe : chaque create reçoit un instant distinct,
+// un jour après l'autre à partir du 1er janvier 2026.
+let compteurHorloge = 0;
+function horodatage(): Date {
+  return new Date(Date.UTC(2026, 0, 1 + compteurHorloge++, 12, 0, 0));
+}
+function dateSeule(s: string): Date {
+  return new Date(`${s}T12:00:00Z`);
+}
 
 async function main() {
   // Nettoyage (ordre respectant les clés étrangères)
@@ -26,10 +42,15 @@ async function main() {
   await prisma.bonCommande.deleteMany();
   await prisma.fournisseur.deleteMany();
 
-  // ── Fournisseurs (insertion inversée) ──────────────────────────────
+  // Maps référence → uuid pour la résolution des clés étrangères
+  const idFournisseur = new Map<string, string>();
+  const idBon = new Map<string, string>();
+  const idArticle = new Map<string, string>();
+
+  // ── Fournisseurs (insertion inversée : v-5 d'abord → affiché en dernier) ──
   const fournisseurs = [
     {
-      id: "v-5",
+      reference: "v-5",
       name: "Summit Transport & Logistique",
       contact: "Mehdi Alami",
       email: "operations@summitlog.ma",
@@ -42,7 +63,7 @@ async function main() {
       status: "On Probation"
     },
     {
-      id: "v-4",
+      reference: "v-4",
       name: "Vertex Conseil & Solutions",
       contact: "Kenza Mansouri",
       email: "contrats@vertexconseil.ma",
@@ -55,7 +76,7 @@ async function main() {
       status: "Approved"
     },
     {
-      id: "v-3",
+      reference: "v-3",
       name: "Vanguard Cybersécurité Maroc",
       contact: "Driss Tazi",
       email: "projets@vanguardcyber.ma",
@@ -68,7 +89,7 @@ async function main() {
       status: "Preferred"
     },
     {
-      id: "v-2",
+      reference: "v-2",
       name: "BlueSky Fournitures & Bureau",
       contact: "Youssef El Amrani",
       email: "commandes@bluesky.ma",
@@ -81,7 +102,7 @@ async function main() {
       status: "Approved"
     },
     {
-      id: "v-1",
+      reference: "v-1",
       name: "Apex Tech & Logistique Maroc",
       contact: "Sarah Benali",
       email: "contact@apextech.ma",
@@ -94,32 +115,39 @@ async function main() {
       status: "Preferred"
     }
   ];
-  for (const f of fournisseurs) await prisma.fournisseur.create({ data: f });
+  for (const f of fournisseurs) {
+    const cree = await prisma.fournisseur.create({
+      data: { ...f, id: randomUUID(), creeLe: horodatage() }
+    });
+    idFournisseur.set(cree.reference, cree.id);
+  }
 
-  // ── Budgets (insertion directe, affichage par ordre d'arrivée) ─────
+  // ── Budgets (insertion directe, affichage par ordre d'arrivée ascendant) ──
   const budgets = [
-    { name: "Technologies de l'Information", allocated: 250000, spent: 90000 },
-    { name: "Ressources Humaines & Moyens Généraux", allocated: 60000, spent: 12500 },
-    { name: "Ventes & Marketing", allocated: 100000, spent: 28200 },
-    { name: "Chaîne Logistique & Approvisionnements", allocated: 120000, spent: 8900 }
+    { reference: "BUD-001", name: "Technologies de l'Information", allocated: 250000, spent: 90000 },
+    { reference: "BUD-002", name: "Ressources Humaines & Moyens Généraux", allocated: 60000, spent: 12500 },
+    { reference: "BUD-003", name: "Ventes & Marketing", allocated: 100000, spent: 28200 },
+    { reference: "BUD-004", name: "Chaîne Logistique & Approvisionnements", allocated: 120000, spent: 8900 }
   ];
-  for (const b of budgets) await prisma.budget.create({ data: b });
+  for (const b of budgets) {
+    await prisma.budget.create({ data: { ...b, id: randomUUID(), creeLe: horodatage() } });
+  }
 
-  // ── Bons de commande (insertion inversée) ──────────────────────────
+  // ── Bons de commande (insertion inversée : DA-005 → DA-001) ──────────
   const bons = [
     {
       bc: {
-        id: "DA-2026-005",
+        reference: "DA-2026-005",
+        vendorRef: "v-5",
         title: "Maintenance & Révision Flotte Véhicules T3",
-        vendorId: "v-5",
         vendorName: "Summit Transport & Logistique",
         amount: 8900,
         category: "Transport & Logistique",
         department: "Chaîne Logistique & Approvisionnements",
         requester: "Mehdi Alami (Responsable Flotte)",
         status: "Draft",
-        createdDate: "2026-06-10",
-        deliveryDate: "2026-07-20",
+        createdDate: dateSeule("2026-06-10"),
+        deliveryDate: dateSeule("2026-07-20"),
         auditScore: 60,
         notes: "Dossier en phase de brouillon pour réévaluation des garanties contractuelles."
       },
@@ -129,17 +157,17 @@ async function main() {
     },
     {
       bc: {
-        id: "DA-2026-004",
+        reference: "DA-2026-004",
+        vendorRef: "v-4",
         title: "Audit & Optimisation Architecture Cloud Multi-Région",
-        vendorId: "v-4",
         vendorName: "Vertex Conseil & Solutions",
         amount: 45000,
         category: "Services & Conseil",
         department: "Technologies de l'Information",
         requester: "Zakaria Radouane (DSI)",
         status: "Fulfilled",
-        createdDate: "2026-04-10",
-        deliveryDate: "2026-05-20",
+        createdDate: dateSeule("2026-04-10"),
+        deliveryDate: dateSeule("2026-05-20"),
         auditScore: 78,
         notes: "Mission réalisée avec succès. Rapport de conformité validé."
       },
@@ -149,17 +177,17 @@ async function main() {
     },
     {
       bc: {
-        id: "DA-2026-003",
+        reference: "DA-2026-003",
+        vendorRef: "v-1",
         title: "Renouvellement Parc Ordinateurs Portables (Équipe Commerciale)",
-        vendorId: "v-1",
         vendorName: "Apex Tech & Logistique Maroc",
         amount: 28200,
         category: "Équipements Informatiques",
         department: "Ventes & Marketing",
         requester: "Karim Berrada (Dir. Commercial)",
         status: "Pending Approval",
-        createdDate: "2026-06-08",
-        deliveryDate: "2026-06-30",
+        createdDate: dateSeule("2026-06-08"),
+        deliveryDate: dateSeule("2026-06-30"),
         auditScore: 92,
         notes: "Option de livraison express confirmée sans surcoût transporteur."
       },
@@ -170,17 +198,17 @@ async function main() {
     },
     {
       bc: {
-        id: "DA-2026-002",
+        reference: "DA-2026-002",
+        vendorRef: "v-2",
         title: "Mobilier Ergonomique & Équipements de Travail",
-        vendorId: "v-2",
         vendorName: "BlueSky Fournitures & Bureau",
         amount: 12500,
         category: "Fournitures de Bureau",
         department: "Ressources Humaines & Moyens Généraux",
         requester: "Maya Lin (Dir. RH)",
         status: "Pending Approval",
-        createdDate: "2026-06-02",
-        deliveryDate: "2026-07-10",
+        createdDate: dateSeule("2026-06-02"),
+        deliveryDate: dateSeule("2026-07-10"),
         auditScore: 85,
         notes: "En attente de signature d'approbation budgétaire finale."
       },
@@ -191,17 +219,17 @@ async function main() {
     },
     {
       bc: {
-        id: "DA-2026-001",
+        reference: "DA-2026-001",
+        vendorRef: "v-3",
         title: "Mise à niveau Antivirus Entreprise & Pare-feu Cloud",
-        vendorId: "v-3",
         vendorName: "Vanguard Cybersécurité Maroc",
         amount: 45000,
         category: "Cybersécurité & Réseaux",
         department: "Technologies de l'Information",
         requester: "Zakaria Radouane (DSI)",
         status: "Approved",
-        createdDate: "2026-05-15",
-        deliveryDate: "2026-06-25",
+        createdDate: dateSeule("2026-05-15"),
+        deliveryDate: dateSeule("2026-06-25"),
         auditScore: 95,
         notes: "Tarif négocié avec remise cadre entreprise appliquée."
       },
@@ -212,14 +240,24 @@ async function main() {
     }
   ];
   for (const { bc, items } of bons) {
-    await prisma.bonCommande.create({ data: { ...bc, items: { create: items } } });
+    const { vendorRef, ...donnees } = bc;
+    const cree = await prisma.bonCommande.create({
+      data: {
+        ...donnees,
+        id: randomUUID(),
+        vendorId: idFournisseur.get(vendorRef)!,
+        creeLe: horodatage(),
+        items: { create: items }
+      }
+    });
+    idBon.set(cree.reference, cree.id);
   }
 
-  // ── Appels d'offres (insertion inversée) ───────────────────────────
+  // ── Appels d'offres (insertion inversée : rfq-2 → rfq-1) ─────────────
   const appels = [
     {
       rfq: {
-        id: "rfq-2",
+        reference: "rfq-2",
         title: "Rénovation Éclairage LED Éco-Énergétique & Domotique Siège",
         department: "Ressources Humaines & Moyens Généraux",
         targetBudget: 25000,
@@ -227,7 +265,6 @@ async function main() {
       },
       bids: [
         {
-          id: "bid-2-1",
           vendorName: "BlueSky Fournitures & Bureau",
           unitPrice: 22000,
           totalPrice: 22000,
@@ -238,7 +275,6 @@ async function main() {
           notes: "Matériel certifié basse consommation. Recyclage de l'ancien parc inclus."
         },
         {
-          id: "bid-2-2",
           vendorName: "Summit Transport & Logistique",
           unitPrice: 17000,
           totalPrice: 17000,
@@ -252,7 +288,7 @@ async function main() {
     },
     {
       rfq: {
-        id: "rfq-1",
+        reference: "rfq-1",
         title: "Mise à niveau Baies de Stockage & Serveurs Haute Disponibilité",
         department: "Technologies de l'Information",
         targetBudget: 60000,
@@ -260,7 +296,6 @@ async function main() {
       },
       bids: [
         {
-          id: "bid-1-1",
           vendorName: "Apex Tech & Logistique Maroc",
           unitPrice: 17500,
           totalPrice: 52500,
@@ -271,7 +306,6 @@ async function main() {
           notes: "Calendrier de livraison standard. SLA extensible sur 3 ans."
         },
         {
-          id: "bid-1-2",
           vendorName: "Vanguard Cybersécurité Maroc",
           unitPrice: 19800,
           totalPrice: 59400,
@@ -282,7 +316,6 @@ async function main() {
           notes: "Composants chiffrés certifiés. Support technique prioritaire sous 24h."
         },
         {
-          id: "bid-1-3",
           vendorName: "Summit Transport & Logistique",
           unitPrice: 12000,
           totalPrice: 36000,
@@ -296,13 +329,15 @@ async function main() {
     }
   ];
   for (const { rfq, bids } of appels) {
-    await prisma.appelOffres.create({ data: { ...rfq, bids: { create: bids } } });
+    await prisma.appelOffres.create({
+      data: { ...rfq, id: randomUUID(), creeLe: horodatage(), bids: { create: bids } }
+    });
   }
 
-  // ── Utilisateurs (insertion inversée) ──────────────────────────────
+  // ── Utilisateurs (insertion inversée : usr-5 → usr-1) ────────────────
   const utilisateurs = [
     {
-      id: "usr-5",
+      reference: "usr-5",
       name: "Mehdi Alami",
       email: "mehdi.alami@entreprise.ma",
       phone: "+212 6 65 67 89 01",
@@ -321,11 +356,10 @@ async function main() {
         canViewBudgets: true
       },
       avatarUrl: "",
-      createdAt: "2026-04-10",
-      lastLogin: "2026-07-25 14:20"
+      derniereConnexion: new Date("2026-07-25T14:20:00Z")
     },
     {
-      id: "usr-4",
+      reference: "usr-4",
       name: "Sarah Benali",
       email: "sarah.benali@entreprise.ma",
       phone: "+212 6 64 56 78 90",
@@ -344,11 +378,10 @@ async function main() {
         canViewBudgets: true
       },
       avatarUrl: "",
-      createdAt: "2026-03-20",
-      lastLogin: "2026-08-18 09:05"
+      derniereConnexion: new Date("2026-08-18T09:05:00Z")
     },
     {
-      id: "usr-3",
+      reference: "usr-3",
       name: "Karim Berrada",
       email: "karim.berrada@entreprise.ma",
       phone: "+212 6 63 45 67 89",
@@ -367,11 +400,10 @@ async function main() {
         canViewBudgets: true
       },
       avatarUrl: "",
-      createdAt: "2026-03-15",
-      lastLogin: "2026-08-17 16:30"
+      derniereConnexion: new Date("2026-08-17T16:30:00Z")
     },
     {
-      id: "usr-2",
+      reference: "usr-2",
       name: "Maya Lin",
       email: "maya.lin@entreprise.ma",
       phone: "+212 6 62 34 56 78",
@@ -390,11 +422,10 @@ async function main() {
         canViewBudgets: true
       },
       avatarUrl: "",
-      createdAt: "2026-02-01",
-      lastLogin: "2026-08-18 11:15"
+      derniereConnexion: new Date("2026-08-18T11:15:00Z")
     },
     {
-      id: "usr-1",
+      reference: "usr-1",
       name: "Zakaria Radouane",
       email: "zakariaradouane61@gmail.com",
       phone: "+212 6 61 23 45 67",
@@ -413,16 +444,17 @@ async function main() {
         canViewBudgets: true
       },
       avatarUrl: "",
-      createdAt: "2026-01-10",
-      lastLogin: "2026-08-18 13:40"
+      derniereConnexion: new Date("2026-08-18T13:40:00Z")
     }
   ];
-  for (const u of utilisateurs) await prisma.utilisateur.create({ data: u });
+  for (const u of utilisateurs) {
+    await prisma.utilisateur.create({ data: { ...u, id: randomUUID(), creeLe: horodatage() } });
+  }
 
-  // ── Articles en stock (insertion inversée) ─────────────────────────
+  // ── Articles en stock (insertion inversée : STK-007 → STK-001) ───────
   const articles = [
     {
-      id: "STK-007",
+      reference: "STK-007",
       assetTag: "IT-CON-6001",
       name: "Cartouche Toner Noir HP LaserJet Enterprise (W9004MC)",
       category: "Consommables & Pièces",
@@ -437,16 +469,16 @@ async function main() {
       totalValueMAD: 3400,
       location: "Réserve Consommables",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-001",
+      purchaseOrderRef: "DA-2026-001",
       purchaseOrderTitle: "Fournitures et consommables",
       vendorName: "BlueSky Fournitures & Bureau",
-      purchaseDate: "2026-05-20",
+      purchaseDate: dateSeule("2026-05-20"),
       warrantyExpiry: null,
       assignedTo: undefined,
       notes: "Stock critique : seuil minimal de 6 unités requis."
     },
     {
-      id: "STK-006",
+      reference: "STK-006",
       assetTag: "IT-ACC-5001",
       name: "Docking Station USB-C Multi-Display 100W",
       category: "Périphériques & Accessoires",
@@ -461,16 +493,16 @@ async function main() {
       totalValueMAD: 36000,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-003",
+      purchaseOrderRef: "DA-2026-003",
       purchaseOrderTitle: "Équipements Informatiques Ventes",
       vendorName: "Apex Tech & Logistique Maroc",
-      purchaseDate: "2026-06-08",
-      warrantyExpiry: "2028-06-08",
+      purchaseDate: dateSeule("2026-06-08"),
+      warrantyExpiry: dateSeule("2028-06-08"),
       assignedTo: undefined,
       notes: "Stations d'accueil universelles double affichage HDMI/DP."
     },
     {
-      id: "STK-005",
+      reference: "STK-005",
       assetTag: "IT-NET-4001",
       name: "Switch Cisco Catalyst 9300 48 Ports PoE+ (C9300-48P)",
       category: "Réseau & Sécurité",
@@ -485,16 +517,16 @@ async function main() {
       totalValueMAD: 98000,
       location: "Local Technique Réseau",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-002",
+      purchaseOrderRef: "DA-2026-002",
       purchaseOrderTitle: "Équipements Réseau & Câblage",
       vendorName: "Vanguard Cybersécurité Maroc",
-      purchaseDate: "2026-05-02",
-      warrantyExpiry: "2029-05-02",
+      purchaseDate: dateSeule("2026-05-02"),
+      warrantyExpiry: dateSeule("2029-05-02"),
       assignedTo: undefined,
       notes: "Commutateur de cœur de réseau PoE+ pour bornes WiFi 6."
     },
     {
-      id: "STK-004",
+      reference: "STK-004",
       assetTag: "IT-SRV-3001",
       name: "Serveur Dell PowerEdge R760 2U (2x Xeon Gold 6430 / 128GB)",
       category: "Serveurs & Stockage",
@@ -509,16 +541,16 @@ async function main() {
       totalValueMAD: 234000,
       location: "Salle Serveurs Datacenter (Baie B2)",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-004",
+      purchaseOrderRef: "DA-2026-004",
       purchaseOrderTitle: "Mise à niveau Serveurs & Datacenter",
       vendorName: "Apex Tech & Logistique Maroc",
-      purchaseDate: "2026-04-20",
-      warrantyExpiry: "2031-04-20",
+      purchaseDate: dateSeule("2026-04-20"),
+      warrantyExpiry: dateSeule("2031-04-20"),
       assignedTo: undefined,
       notes: "Cluster virtualisation VMware / Proxmox."
     },
     {
-      id: "STK-003",
+      reference: "STK-003",
       assetTag: "IT-MON-2001",
       name: "Écran Dell UltraSharp 27\" 4K USB-C Hub (U2723QE)",
       category: "Postes Fixes & Écrans",
@@ -533,16 +565,16 @@ async function main() {
       totalValueMAD: 120000,
       location: "Stock IT Étage 3",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-001",
+      purchaseOrderRef: "DA-2026-001",
       purchaseOrderTitle: "Renouvellement Postes de Travail & Écrans",
       vendorName: "Apex Tech & Logistique Maroc",
-      purchaseDate: "2026-05-15",
-      warrantyExpiry: "2029-05-15",
+      purchaseDate: dateSeule("2026-05-15"),
+      warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: undefined,
       notes: "Avec alimentation 90W USB-C PD et port Ethernet RJ45 intégré."
     },
     {
-      id: "STK-002",
+      reference: "STK-002",
       assetTag: "IT-LAP-1002",
       name: "Lenovo ThinkPad T14s Gen 4 (AMD Ryzen 7 PRO / 32GB)",
       category: "Laptops & Portables",
@@ -557,11 +589,11 @@ async function main() {
       totalValueMAD: 110400,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-001",
+      purchaseOrderRef: "DA-2026-001",
       purchaseOrderTitle: "Renouvellement Postes de Travail & Écrans",
       vendorName: "Apex Tech & Logistique Maroc",
-      purchaseDate: "2026-05-15",
-      warrantyExpiry: "2029-05-15",
+      purchaseDate: dateSeule("2026-05-15"),
+      warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: {
         userName: "Sarah Bennani",
         department: "Ressources Humaines & Moyens Généraux",
@@ -570,7 +602,7 @@ async function main() {
       notes: "Ultraportable haute autonomie."
     },
     {
-      id: "STK-001",
+      reference: "STK-001",
       assetTag: "IT-LAP-1001",
       name: "Dell Latitude 5540 i7 13th Gen (32GB / 1TB SSD)",
       category: "Laptops & Portables",
@@ -585,11 +617,11 @@ async function main() {
       totalValueMAD: 217500,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      purchaseOrderId: "DA-2026-001",
+      purchaseOrderRef: "DA-2026-001",
       purchaseOrderTitle: "Renouvellement Postes de Travail & Écrans",
       vendorName: "Apex Tech & Logistique Maroc",
-      purchaseDate: "2026-05-15",
-      warrantyExpiry: "2029-05-15",
+      purchaseDate: dateSeule("2026-05-15"),
+      warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: {
         userName: "Karim Berrada",
         department: "Ventes & Marketing",
@@ -598,63 +630,85 @@ async function main() {
       notes: "Postes standards ingénieurs et managers."
     }
   ];
-  for (const a of articles) await prisma.articleStock.create({ data: a });
+  for (const a of articles) {
+    const { purchaseOrderRef, ...donnees } = a;
+    const cree = await prisma.articleStock.create({
+      data: {
+        ...donnees,
+        id: randomUUID(),
+        purchaseOrderId: idBon.get(purchaseOrderRef)!,
+        creeLe: horodatage()
+      }
+    });
+    idArticle.set(cree.reference, cree.id);
+  }
 
-  // ── Mouvements de stock (insertion inversée) ───────────────────────
+  // ── Mouvements de stock (insertion inversée : MVT-004 → MVT-001) ─────
   const mouvements = [
     {
-      id: "MVT-004",
-      stockItemId: "STK-007",
+      reference: "MVT-004",
+      articleRef: "STK-007",
       itemName: "Cartouche Toner Noir HP LaserJet Enterprise",
       type: "Entrée Achat",
       quantity: 4,
       performedBy: "Zakaria Radouane",
-      date: "2026-05-20",
-      purchaseOrderId: "DA-2026-001",
+      date: dateSeule("2026-05-20"),
+      purchaseOrderRef: "DA-2026-001",
       notes: "Réception partielle commande consommables."
     },
     {
-      id: "MVT-003",
-      stockItemId: "STK-002",
+      reference: "MVT-003",
+      articleRef: "STK-002",
       itemName: "Lenovo ThinkPad T14s Gen 4",
       type: "Sortie Affectation",
       quantity: 1,
       performedBy: "Maya Lin",
       recipient: "Sarah Bennani",
       department: "Ressources Humaines & Moyens Généraux",
-      date: "2026-06-03",
+      date: dateSeule("2026-06-03"),
       notes: "Mise à disposition PC portable RH."
     },
     {
-      id: "MVT-002",
-      stockItemId: "STK-001",
+      reference: "MVT-002",
+      articleRef: "STK-001",
       itemName: "Dell Latitude 5540 i7 13th Gen",
       type: "Sortie Affectation",
       quantity: 1,
       performedBy: "Zakaria Radouane (DSI)",
       recipient: "Karim Berrada",
       department: "Ventes & Marketing",
-      date: "2026-06-01",
+      date: dateSeule("2026-06-01"),
       notes: "Dotation matériel nouveau collaborateur."
     },
     {
-      id: "MVT-001",
-      stockItemId: "STK-001",
+      reference: "MVT-001",
+      articleRef: "STK-001",
       itemName: "Dell Latitude 5540 i7 13th Gen",
       type: "Entrée Achat",
       quantity: 15,
       performedBy: "Zakaria Radouane (DSI)",
-      date: "2026-05-15",
-      purchaseOrderId: "DA-2026-001",
+      date: dateSeule("2026-05-15"),
+      purchaseOrderRef: "DA-2026-001",
       notes: "Réception de commande fournisseur Apex Tech."
     }
   ];
-  for (const m of mouvements) await prisma.mouvementStock.create({ data: m });
+  for (const m of mouvements) {
+    const { articleRef, purchaseOrderRef, ...donnees } = m;
+    await prisma.mouvementStock.create({
+      data: {
+        ...donnees,
+        id: randomUUID(),
+        stockItemId: idArticle.get(articleRef)!,
+        purchaseOrderId: purchaseOrderRef ? idBon.get(purchaseOrderRef)! : null,
+        creeLe: horodatage()
+      }
+    });
+  }
 
-  // ── Affectations (insertion inversée) ──────────────────────────────
+  // ── Affectations (insertion inversée : 003 → 001) ─────────────────────
   await prisma.affectation.create({
     data: {
-      id: "AFF-2026-003",
+      id: randomUUID(),
       reference: "AFF-DSI-2026-003",
       templateType: "STANDARD_DSI_EQUIPMENT",
       beneficiaryName: "Omar Tazi",
@@ -664,15 +718,17 @@ async function main() {
       beneficiaryJobTitle: "Analyste Financier Senior",
       beneficiaryDepartment: "Finance & Contrôle de Gestion",
       beneficiarySite: "Casablanca Siège",
-      assignedDate: "2026-05-15",
+      assignedDate: dateSeule("2026-05-15"),
       status: "Restitué",
       authorizedBy: "Zakaria Radouane",
       dsiTitle: "Directeur des Systèmes d'Information (DSI)",
       termsAccepted: true,
       notes: "Dotation initiale lors de la prise de fonction.",
+      creeLe: horodatage(),
       items: {
         create: [
           {
+
             stockItemId: "STK-001",
             assetTag: "IT-2026-001",
             name: "Lenovo ThinkPad T14s Gen 4 - Core i7 32GB RAM",
@@ -687,8 +743,7 @@ async function main() {
       },
       returnRecord: {
         create: {
-          id: "RET-2026-001",
-          returnDate: "2026-06-05",
+          returnDate: dateSeule("2026-06-05"),
           cause: "Renouvellement matériel / Upgrade",
           equipmentCondition: "Bon état d'usage",
           accessoriesReturned: ["Chargeur 65W USB-C", "Sacoche Lenovo ThinkPad"],
@@ -706,7 +761,7 @@ async function main() {
 
   await prisma.affectation.create({
     data: {
-      id: "AFF-2026-002",
+      id: randomUUID(),
       reference: "AFF-DSI-2026-002",
       templateType: "STANDARD_DSI_EQUIPMENT",
       beneficiaryName: "Sarah Bennani",
@@ -716,15 +771,17 @@ async function main() {
       beneficiaryJobTitle: "Responsable Recrutement & RH",
       beneficiaryDepartment: "Ressources Humaines & Moyens Généraux",
       beneficiarySite: "Casablanca Siège",
-      assignedDate: "2026-06-03",
+      assignedDate: dateSeule("2026-06-03"),
       status: "Active",
       authorizedBy: "Zakaria Radouane",
       dsiTitle: "Directeur des Systèmes d'Information (DSI)",
       termsAccepted: true,
       notes: "Pack télétravail & bureautique complet remis en main propre.",
+      creeLe: horodatage(),
       items: {
         create: [
           {
+
             stockItemId: "STK-002",
             assetTag: "IT-2026-002",
             name: "Dell Latitude 5540 Core i7 / 16GB / 512GB SSD",
@@ -736,6 +793,7 @@ async function main() {
             accessories: ["Sacoche Dell Pro 15.6\"", "Bloc d'alimentation 65W USB-C", "Souris sans fil Dell MS116"]
           },
           {
+
             stockItemId: "STK-004",
             assetTag: "IT-2026-004",
             name: "Écran Professionnel Dell UltraSharp 27\" 4K U2723QE",
@@ -753,7 +811,7 @@ async function main() {
 
   await prisma.affectation.create({
     data: {
-      id: "AFF-2026-001",
+      id: randomUUID(),
       reference: "AFF-DSI-2026-001",
       templateType: "DISTRA_SIM_SMARTPHONE",
       formCode: "IT-02",
@@ -764,7 +822,7 @@ async function main() {
       beneficiaryJobTitle: "Responsable Commercial",
       beneficiaryDepartment: "BU - Comm",
       beneficiarySite: "Berrechid",
-      assignedDate: "2026-08-15",
+      assignedDate: dateSeule("2026-08-15"),
       status: "Active",
       authorizedBy: "Directeur Systèmes d'Information",
       dsiTitle: "Département Systèmes D'Information",
@@ -785,9 +843,11 @@ async function main() {
       incidentRemarks: "INCIDENT / PANNE",
       termsAccepted: true,
       notes: "Affectation conforme charte Distra SA. Matériel remis en main propre.",
+      creeLe: horodatage(),
       items: {
         create: [
           {
+
             stockItemId: "STK-006",
             assetTag: "IT-TEL-001",
             name: "HP Smart Device 15-AY002NK (4GB/500GB) + SIM IAM",

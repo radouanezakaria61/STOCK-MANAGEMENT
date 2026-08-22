@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
+import { numeroSuivant } from "../lib/ids.js";
 
 export interface EntreeFournisseur {
   name?: string;
@@ -18,10 +19,14 @@ export async function creerFournisseur(data: EntreeFournisseur) {
     throw requeteInvalide("Missing required vendor fields.");
   }
 
-  const total = await prisma.fournisseur.count();
+  const references = (
+    await prisma.fournisseur.findMany({ select: { reference: true }, where: { reference: { startsWith: "v-" } } })
+  ).map((f) => f.reference);
+  const numero = numeroSuivant(references, /^v-(\d+)$/);
+
   const nouveau = await prisma.fournisseur.create({
     data: {
-      id: `v-${total + 1}`,
+      reference: `v-${numero}`,
       name,
       contact,
       email,
@@ -39,10 +44,12 @@ export async function creerFournisseur(data: EntreeFournisseur) {
 }
 
 export async function noterFournisseur(
-  id: string,
+  idOuReference: string,
   data: { qualityScore?: unknown; onTimeDelivery?: unknown; riskLevel?: string }
 ) {
-  const fournisseur = await prisma.fournisseur.findUnique({ where: { id } });
+  const fournisseur = await prisma.fournisseur.findFirst({
+    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
+  });
   if (!fournisseur) throw introuvable("Supplier not found.");
 
   const donnees: Record<string, unknown> = {};
@@ -57,6 +64,6 @@ export async function noterFournisseur(
     }
   }
 
-  const misAJour = await prisma.fournisseur.update({ where: { id }, data: donnees });
+  const misAJour = await prisma.fournisseur.update({ where: { id: fournisseur.id }, data: donnees });
   return { message: "Vendor attributes updated.", data: misAJour };
 }
