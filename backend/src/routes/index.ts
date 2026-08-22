@@ -27,11 +27,14 @@ import {
   listerAffectations,
   creerAffectation,
   restituerAffectation,
-  supprimerAffectation
+  annulerAffectation
 } from "../services/affectations.service.js";
 import { ZodError } from "zod";
 import { routerAuth } from "./auth.routes.js";
 import { chargerSession, exigerAuth, exigerPermission, verifierOrigine } from "../middleware/auth.js";
+import { avecIdempotence } from "../middleware/idempotence.js";
+import { acteurDepuis } from "../lib/acteur.js";
+import { listerNotifications, marquerCommeLue } from "../services/notifications.service.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -108,35 +111,48 @@ routerApi.get("/stock/search", h(async (req, res) => {
   });
   res.json({ status: "ok", data });
 }));
-routerApi.post("/stock", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  const r = await creerArticle(req.body);
+// Mutations créatrices de stock : enveloppe d'idempotence (en-tête
+// `X-Cle-Idempotence` optionnel du client) + contexte acteur pour l'audit.
+routerApi.post("/stock", exigerPermission("stock.ecrire"), avecIdempotence(async (req, res) => {
+  const r = await creerArticle(req.body, acteurDepuis(req));
   res.status(201).json(r);
 }));
 routerApi.put("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  const r = await modifierArticle(req.params["id"]!, req.body);
+  const r = await modifierArticle(req.params["id"]!, req.body, acteurDepuis(req));
   res.json(r);
 }));
 routerApi.post("/stock/:id/movement", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  const r = await enregistrerMouvement(req.params["id"]!, req.body);
+  const r = await enregistrerMouvement(req.params["id"]!, req.body, acteurDepuis(req));
   res.json(r);
 }));
 routerApi.delete("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  res.json(await supprimerArticle(req.params["id"]!));
+  res.json(await supprimerArticle(req.params["id"]!, acteurDepuis(req)));
 }));
 
 routerApi.get("/assignments", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerAffectations() });
 }));
-routerApi.post("/assignments", exigerPermission("affectations.ecrire"), h(async (req, res) => {
-  const r = await creerAffectation(req.body);
+routerApi.post("/assignments", exigerPermission("affectations.ecrire"), avecIdempotence(async (req, res) => {
+  const r = await creerAffectation(req.body, acteurDepuis(req));
   res.status(201).json(r);
 }));
 routerApi.post("/assignments/:id/return", exigerPermission("affectations.ecrire"), h(async (req, res) => {
-  const r = await restituerAffectation(req.params["id"]!, req.body);
+  const r = await restituerAffectation(req.params["id"]!, req.body, acteurDepuis(req));
   res.json(r);
 }));
+// Annulation d'une fiche active (remet les quantités en stock). L'historique
+// des fiches restituées reste immuable : la route refuse au-delà.
 routerApi.delete("/assignments/:id", exigerPermission("affectations.ecrire"), h(async (req, res) => {
-  res.json(await supprimerAffectation(req.params["id"]!));
+  res.json(await annulerAffectation(req.params["id"]!, acteurDepuis(req)));
+}));
+
+// Notifications internes : consultables par tout utilisateur authentifié,
+// marquage « lue » individuel (les alertes RESOLUES se closent seules).
+routerApi.get("/notifications", h(async (_req, res) => {
+  res.json({ status: "ok", data: await listerNotifications() });
+}));
+routerApi.post("/notifications/:id/lue", h(async (req, res) => {
+  res.json(await marquerCommeLue(req.params["id"]!));
 }));
 
 // ── Gestionnaire d'erreurs central ────────────────────────────────────
@@ -148,7 +164,7 @@ export function gestionnaireErreurs(
   _next: NextFunction
 ): void {
   if (err instanceof ErreurMetier) {
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json(err.code ? { error: err.message, code: err.code } : { error: err.message });
     return;
   }
   // Corps JSON malformé : body-parser lève `entity.parse.failed`.

@@ -103,6 +103,11 @@ function dateSeule(s: string): Date {
 }
 
 async function main() {
+  // Échappatoire de purge (trigger `interdire_ecriture_journal`) : le seed
+  // est la seule application autorisée à vider les journaux, et uniquement
+  // en développement. En production, cette variable n'est jamais posée par
+  // l'application — une purge est une opération DBA documentée.
+  await prisma.$executeRawUnsafe("SELECT set_config('app.purge_journaux', 'autorisee', false)");
   // Nettoyage (ordre respectant les clés étrangères)
   await prisma.journalAudit.deleteMany();
   await prisma.session.deleteMany();

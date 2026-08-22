@@ -113,7 +113,7 @@ routerAuth.post(
       enregistrerEchecConnexion(cleLimiteur);
       await journaliserAudit(
         {
-          action: "LOGIN_REFUSE",
+          action: "LOGIN_FAILED",
           utilisateurId: utilisateur?.id ?? null,
           identifiantTente: identifiantNormalise
         },
@@ -129,7 +129,7 @@ routerAuth.post(
       data: { derniereConnexion: new Date() }
     });
     await journaliserAudit({
-      action: "LOGIN",
+      action: "LOGIN_SUCCESS",
       utilisateurId: utilisateur.id,
       identifiantTente: utilisateur.username
     }, req);
@@ -200,7 +200,7 @@ routerAuth.post(
     // Toutes les autres sessions sont révoquées ; la session courante survit.
     const sessionsRevoked = await invaliderSessions(utilisateur.id, contexte.sessionId);
     await journaliserAudit({
-      action: "CHANGEMENT_MOT_DE_PASSE",
+      action: "PASSWORD_CHANGED",
       utilisateurId: utilisateur.id,
       identifiantTente: utilisateur.username,
       entite: "Utilisateur",

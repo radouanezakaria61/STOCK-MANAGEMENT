@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment, ProfilUtilisateur } from "./types";
+import { useState, useEffect, useCallback } from "react";
+import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment, ProfilUtilisateur, NotificationInterne } from "./types";
 import DashboardOverview from "./components/DashboardOverview";
 import SocietesManagement from "./components/SocietesManagement";
 import UserManagement from "./components/UserManagement";
@@ -63,48 +63,95 @@ export default function App() {
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [assignments, setAssignments] = useState<MaterialAssignment[]>([]);
 
-  // Flux de notifications en français
-  const [notifications, setNotifications] = useState<any[]>([
-    {
-      id: "notif-1",
-      title: "Alerte Stock IT Critique",
-      description: "Les cartouches HP LaserJet sont sous le seuil d'alerte minimal (4 unités restantes).",
-      timestamp: new Date(Date.now() - 1000 * 60 * 50),
-      type: "alerte",
-      unread: true,
-      targetTab: "stock"
-    },
-    {
-      id: "notif-2",
-      title: "Référentiel Sociétés à Jour",
-      description: "Les entités du groupe (siège et filiales) sont disponibles pour le rattachement des utilisateurs.",
-      timestamp: new Date(Date.now() - 1000 * 60 * 110),
-      type: "info",
-      unread: false,
-      targetTab: "societes"
-    }
-  ]);
+  // Flux de notifications — données SERVEUR (chantier 3) : alertes stock,
+  // maintenance, matériel endommagé… persistées et dédupliquées côté API.
+  // `notificationsLocales` garde les messages éphémères d'interface (confirmation
+  // d'action) qui ne méritent pas une persistance.
+  const [notifications, setNotifications] = useState<NotificationInterne[]>([]);
+  const [notificationsLocales, setNotificationsLocales] = useState<
+    (NotificationInterne & { statut: "OUVERTE" })[]
+  >([]);
 
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
 
-  // Helper pour ajouter une notification
+  // Helper pour ajouter une notification éphémère (non persistée)
   const addNotification = (
     title: string,
     description: string,
-    type: "alerte" | "info",
+    _type: "alerte" | "info",
     targetTab?: string
   ) => {
-    const newNotif = {
-      id: `notif-${Date.now()}`,
-      title,
-      description,
-      timestamp: new Date(),
-      type,
-      unread: true,
-      targetTab
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
+    setNotificationsLocales((prev) => [
+      {
+        id: `local-${Date.now()}`,
+        type: "INTERVENTION_ADMIN",
+        titre: title,
+        message: description,
+        statut: "OUVERTE",
+        entite: null,
+        entiteId: null,
+        cibleOnglet: targetTab ?? null,
+        creeLe: new Date().toISOString()
+      },
+      ...prev
+    ]);
   };
+
+  // Interroge le serveur ; silencieux en cas d'échec (la cloche n'est pas
+  // critique : une panne réseau ne doit pas spammer l'utilisateur).
+  const chargerNotifications = useCallback(async () => {
+    try {
+      const res = await fetch("/api/notifications");
+      if (!res.ok) return;
+      const payload = await res.json();
+      setNotifications(payload.data.items as NotificationInterne[]);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Rafraîchissement périodique pendant la session (30 s).
+  useEffect(() => {
+    if (!profil) return;
+    chargerNotifications();
+    const interval = setInterval(chargerNotifications, 30_000);
+    return () => clearInterval(interval);
+  }, [profil, chargerNotifications]);
+
+  const marquerLue = async (id: string) => {
+    if (id.startsWith("local-")) {
+      setNotificationsLocales((prev) => prev.filter((n) => n.id !== id));
+      return;
+    }
+    try {
+      await fetch(`/api/notifications/${id}/lue`, { method: "POST" });
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, statut: "LUE" } : n))
+      );
+    } catch {
+      // L'interrogation périodique resynchronisera l'état réel.
+    }
+  };
+
+  const marquerToutLu = async () => {
+    const ouvertes = notifications.filter((n) => n.statut === "OUVERTE");
+    setNotifications((prev) =>
+      prev.map((n) => (n.statut === "OUVERTE" ? { ...n, statut: "LUE" } : n))
+    );
+    setNotificationsLocales([]);
+    for (const n of ouvertes) {
+      try {
+        await fetch(`/api/notifications/${n.id}/lue`, { method: "POST" });
+      } catch {
+        // ignore — resynchro périodique
+      }
+    }
+  };
+
+  // Liste unifiée pour l'affichage : serveur d'abord, messages locaux ensuite.
+  const toutesNotifications = [...notificationsLocales, ...notifications];
+  const nombreNonLues =
+    notifications.filter((n) => n.statut === "OUVERTE").length + notificationsLocales.length;
 
   // 1. Récupération du jeu de données consolidé du parc IT.
   // Toute réponse 401 (session expirée ou révoquée) ramène à l'écran de connexion.
@@ -184,6 +231,8 @@ export default function App() {
     setStockItems([]);
     setStockMovements([]);
     setAssignments([]);
+    setNotifications([]);
+    setNotificationsLocales([]);
     setActiveTab("dashboard");
   };
 
@@ -365,10 +414,10 @@ export default function App() {
                 }`}
                 title="Notifications d'Activité"
               >
-                <Bell size={15} className={notifications.some(n => n.unread) ? "text-indigo-600 animate-pulse" : ""} />
-                {notifications.some(n => n.unread) && (
+                <Bell size={15} className={nombreNonLues > 0 ? "text-indigo-600 animate-pulse" : ""} />
+                {nombreNonLues > 0 && (
                   <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-extrabold text-[8px] w-4.5 h-4.5 rounded-full flex items-center justify-center border-2 border-white">
-                    {notifications.filter(n => n.unread).length}
+                    {nombreNonLues}
                   </span>
                 )}
               </button>
@@ -380,69 +429,71 @@ export default function App() {
                     <div className="flex items-center gap-1.5">
                       <span className="font-extrabold text-xs text-slate-800 uppercase tracking-wider">Flux d'Alertes</span>
                       <span className="bg-rose-50 text-rose-700 border border-rose-200 font-black text-[9px] px-2 py-0.5 rounded-full">
-                        {notifications.filter(n => n.unread).length} En attente
+                        {nombreNonLues} En attente
                       </span>
                     </div>
                     <div className="flex items-center gap-2.5 text-[10px]">
                       <button
                         type="button"
-                        onClick={() => {
-                          setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
-                        }}
+                        onClick={marquerToutLu}
                         className="text-indigo-600 hover:text-indigo-800 font-bold uppercase transition cursor-pointer"
                       >
                         Tout marquer lu
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setNotifications([])}
-                        className="text-slate-400 hover:text-rose-600 font-bold uppercase transition cursor-pointer"
-                      >
-                        Effacer
                       </button>
                     </div>
                   </div>
 
                   {/* LISTE DÉFILANTE */}
                   <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
-                    {notifications.length === 0 ? (
+                    {toutesNotifications.length === 0 ? (
                       <div className="p-8 text-center text-slate-400 space-y-2">
                         <BellOff className="mx-auto text-slate-300" size={24} />
                         <p className="text-xs font-bold text-slate-500">Aucune alerte en attente</p>
                         <p className="text-[10px]">Toutes les actions prioritaires ont été traitées.</p>
                       </div>
                     ) : (
-                      notifications.map((item) => {
+                      toutesNotifications.map((item) => {
+                        const nonLue = item.statut === "OUVERTE";
+                        const resolue = item.statut === "RESOLUE";
+
                         let iconColor = "bg-blue-50 text-blue-600 border-blue-100";
                         let IconComp = Info;
 
-                        if (item.type === "alerte") {
+                        if (
+                          item.type === "STOCK_FAIBLE" ||
+                          item.type === "MATERIEL_ENDOMMAGE" ||
+                          item.type === "INCOHERENCE_DONNEES"
+                        ) {
                           iconColor = "bg-rose-50 text-rose-600 border-rose-100";
                           IconComp = AlertCircle;
+                        } else if (item.type === "MAINTENANCE_TERMINEE") {
+                          iconColor = "bg-emerald-50 text-emerald-600 border-emerald-100";
+                          IconComp = CheckCircle2;
                         }
 
                         // Calcul du temps écoulé
-                        const minsElapsed = Math.max(1, Math.round((Date.now() - new Date(item.timestamp).getTime()) / (1000 * 60)));
+                        const minsElapsed = Math.max(1, Math.round((Date.now() - new Date(item.creeLe).getTime()) / (1000 * 60)));
                         let timeLabel = `Il y a ${minsElapsed} min`;
                         if (minsElapsed >= 60) {
                           timeLabel = `Il y a ${Math.round(minsElapsed / 60)} h`;
+                        }
+                        if (resolue) {
+                          timeLabel += " · Résolue";
                         }
 
                         return (
                           <div
                             key={item.id}
                             onClick={() => {
-                              setNotifications(prev =>
-                                prev.map(n => (n.id === item.id ? { ...n, unread: false } : n))
-                              );
-                              if (item.targetTab) {
-                                setActiveTab(item.targetTab);
+                              void marquerLue(item.id);
+                              if (item.cibleOnglet) {
+                                setActiveTab(item.cibleOnglet);
                               }
                               setShowNotificationDropdown(false);
                             }}
                             className={`p-3 flex gap-3 cursor-pointer text-left transition items-start ${
-                              item.unread ? "bg-indigo-50/15 hover:bg-indigo-50/25" : "hover:bg-slate-50/50"
-                            }`}
+                              nonLue ? "bg-indigo-50/15 hover:bg-indigo-50/25" : "hover:bg-slate-50/50"
+                            } ${resolue ? "opacity-60" : ""}`}
                           >
                             <div className={`w-8.5 h-8.5 rounded-xl flex items-center justify-center border shrink-0 ${iconColor}`}>
                               <IconComp size={15} />
@@ -450,16 +501,16 @@ export default function App() {
                             <div className="space-y-0.5 min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-1.5">
                                 <h4 className={`text-xs truncate transition leading-tight ${
-                                  item.unread ? "font-black text-slate-900" : "font-semibold text-slate-600"
+                                  nonLue ? "font-black text-slate-900" : "font-semibold text-slate-600"
                                 }`}>
-                                  {item.title}
+                                  {item.titre}
                                 </h4>
-                                {item.unread && (
+                                {nonLue && (
                                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0 mt-1"></span>
                                 )}
                               </div>
                               <p className="text-[10.5px] text-slate-500 leading-relaxed truncate-2-lines break-words">
-                                {item.description}
+                                {item.message}
                               </p>
                               <span className="text-[9.5px] text-slate-400 font-bold block pt-0.5">
                                 {timeLabel}

@@ -1,11 +1,21 @@
 /**
- * Vérification de non-régression après le chantier 2b :
- * authentification Argon2id, sessions serveur (cookie HttpOnly), RBAC à six
- * rôles, limitation des tentatives de connexion, audit des connexions.
+ * Vérification de non-régression après les chantiers 2b et 3 :
+ *  - 2b : authentification Argon2id, sessions serveur (cookie HttpOnly),
+ *    RBAC six rôles, limitation des tentatives de connexion, audit connexions ;
+ *  - 3  : journal d'audit en base avec valeurs avant/après, notifications
+ *    internes dédupliquées, idempotence des mutations créatrices, machine à
+ *    états du matériel, invariants de quantités (3 compartiments) vérifiés
+ *    PAR LA BASE, restitution endommagée forcée en maintenance, annulation
+ *    vs historique immuable.
  *
- * Prérequis : serveur démarré (npm run dev ou build+start), base seedée en
- * mode démonstration (comptes dev + mot de passe commun du seed).
+ * Prérequis : serveur démarré (npm run dev ou build+start). La suite se
+ * réinitialise elle-même : le seed démonstration est rejoué en tête de
+ * course pour garantir des compteurs et un ordre de références connus,
+ * quel que soit l'état laissé par les exécutions précédentes.
  */
+import { execSync } from "node:child_process";
+import { PrismaClient } from "@prisma/client";
+
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
 // Doit refléter MOT_DE_PASSE_DEMO du seed (développement uniquement).
@@ -87,6 +97,13 @@ function cookiesDe(res: Response): string[] {
 }
 
 async function main() {
+  // ══════════ 0. ÉTAT CONNU : rejeu du seed démonstration ══════════
+  // Les sections C et E comparent les compteurs de /api/data à l'état
+  // seedé (2,5,7,4,3) : on repart donc d'une base réinitialisée pour que
+  // la suite soit rejouable, même après une exécution avortée.
+  console.log("── 0. Réinitialisation (seed démonstration) ──");
+  execSync("npx prisma db seed", { stdio: "inherit" });
+
   // ══════════ A. SANS SESSION : TOUT EST FERMÉ (critère « Fini quand ») ══════════
   console.log("\n── A. Accès anonymes refusés ──");
   const anon = new SessionHttp();
@@ -364,7 +381,494 @@ async function main() {
     verif(`POST ${chemin} → 404`, res.status === 404, `status=${res.status}`);
   }
 
-  console.log(echecs === 0 ? "\nNON-RÉGRESSION 2b : TOUS LES CONTRÔLES PASSENT" : `\nNON-RÉGRESSION : ${echecs} ÉCHEC(S)`);
+  // ══════════ H. NOTIFICATIONS INTERNES (chantier 3) ══════════
+  console.log("\n── H. Notifications internes ──");
+  // Session VIERGE : `anon` a obtenu des cookies lors des tests de connexion
+  // en section B, il ne représente plus un accès sans session.
+  const notifsAnon = await new SessionHttp().json("/api/notifications");
+  verif("GET /api/notifications sans session → 401", notifsAnon.status === 401, `${notifsAnon.status}`);
+
+  const marqueCh3 = `CH3-${Date.now().toString(36)}`;
+  const lireData = async () => (await admin.json("/api/data")).corps.data;
+
+  const articleSousSeuil = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} consommable sous seuil`,
+      category: "Consommables & Pièces",
+      brand: "Test",
+      model: "CH3",
+      serialNumber: `${marqueCh3}-SN1`,
+      quantity: 1,
+      minThreshold: 3,
+      unitPriceMAD: 120,
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  const idSousSeuil: string | undefined = articleSousSeuil.corps?.data?.id;
+  verif(
+    "création article (dispo 1 < seuil 3) → 201",
+    articleSousSeuil.status === 201 && estUuid(idSousSeuil),
+    `${articleSousSeuil.status} ${JSON.stringify(articleSousSeuil.corps).slice(0, 150)}`
+  );
+
+  const notifsApresCreation = await admin.json("/api/notifications");
+  const alerteStock = (notifsApresCreation.corps?.data?.items ?? []).find(
+    (n: any) => n.type === "STOCK_FAIBLE" && n.entiteId === idSousSeuil && n.statut === "OUVERTE"
+  );
+  const nonLuesAvant: number = notifsApresCreation.corps?.data?.nonLues ?? -1;
+  verif(
+    "alerte STOCK_FAIBLE ouverte générée automatiquement",
+    !!alerteStock && typeof nonLuesAvant === "number" && nonLuesAvant >= 1,
+    JSON.stringify(notifsApresCreation.corps?.data?.nonLues)
+  );
+
+  const marquageLu = await admin.json(`/api/notifications/${alerteStock?.id}/lue`, { method: "POST" });
+  const notifsApresLu = await admin.json("/api/notifications");
+  const alerteApresLu = (notifsApresLu.corps?.data?.items ?? []).find((n: any) => n.id === alerteStock?.id);
+  verif(
+    "marquage LUE : statut basculé + compteur décrémenté",
+    marquageLu.status === 200 &&
+      alerteApresLu?.statut === "LUE" &&
+      notifsApresLu.corps.data.nonLues === nonLuesAvant - 1,
+    `marquage=${marquageLu.status} statut=${alerteApresLu?.statut}`
+  );
+
+  // ══════════ I. IDEMPOTENCE DES CRÉATIONS (chantier 3) ══════════
+  console.log("\n── I. Idempotence (X-Cle-Idempotence) ──");
+  const donneesAvantIdem = await lireData();
+  const nbArticlesAvantIdem = donneesAvantIdem.articles.length;
+  const cleIdem = `${marqueCh3}-IDEM`;
+  const corpsIdem = {
+    name: `${marqueCh3} article idempotent`,
+    category: "Consommables & Pièces",
+    brand: "Test",
+    model: "CH3",
+    serialNumber: `${marqueCh3}-SN2`,
+    quantity: 2,
+    minThreshold: 0,
+    unitPriceMAD: 50,
+    performedBy: "Vérificateur Chantier 3"
+  };
+  const entetesIdem = { "content-type": "application/json", "x-cle-idempotence": cleIdem };
+
+  const premiereFois = await admin.json("/api/stock", { method: "POST", headers: entetesIdem, body: JSON.stringify(corpsIdem) });
+  const idArticleIdem: string | undefined = premiereFois.corps?.data?.id;
+  verif("première création avec clé → 201", premiereFois.status === 201 && estUuid(idArticleIdem), `${premiereFois.status}`);
+
+  const rejeu = await admin.json("/api/stock", { method: "POST", headers: entetesIdem, body: JSON.stringify(corpsIdem) });
+  verif(
+    "retransmission identique → réponse REJOUÉE (même article)",
+    rejeu.status === 201 && rejeu.corps?.data?.id === idArticleIdem,
+    `${rejeu.status} ${JSON.stringify(rejeu.corps).slice(0, 100)}`
+  );
+
+  const conflitCle = await admin.json("/api/stock", {
+    method: "POST",
+    headers: entetesIdem,
+    body: JSON.stringify({ ...corpsIdem, quantity: 999 })
+  });
+  verif(
+    "même clé + corps différent → 409",
+    conflitCle.status === 409,
+    `${conflitCle.status} ${JSON.stringify(conflitCle.corps)}`
+  );
+
+  const donneesApresIdem = await lireData();
+  verif(
+    "UN SEUL article créé malgré deux requêtes",
+    donneesApresIdem.articles.length === nbArticlesAvantIdem + 1 &&
+      !donneesApresIdem.articles.some((a: any) => a.serialNumber === `${marqueCh3}-SN2-DUP`),
+    `${nbArticlesAvantIdem} → ${donneesApresIdem.articles.length}`
+  );
+
+  // ══════════ J. MACHINE À ÉTATS & INVARIANTS QUANTITÉS ══════════
+  console.log("\n── J. Machine à états et invariants ──");
+  const transitionInterdite = await admin.json(`/api/stock/${idSousSeuil}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "Supprimé" })
+  });
+  verif(
+    "« En Stock » → « Supprimé » hors machine à états → 409 INVALID_STATUS_TRANSITION",
+    transitionInterdite.status === 409 && transitionInterdite.corps.code === "INVALID_STATUS_TRANSITION",
+    `${transitionInterdite.status} ${JSON.stringify(transitionInterdite.corps)}`
+  );
+
+  const articlePlancher = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} article plancher`,
+      category: "Consommables & Pièces",
+      brand: "Test",
+      model: "CH3",
+      serialNumber: `${marqueCh3}-SN3`,
+      quantity: 1,
+      minThreshold: 0,
+      unitPriceMAD: 10,
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  const idPlancher: string | undefined = articlePlancher.corps?.data?.id;
+
+  const fichePlancher = await admin.json("/api/assignments", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      templateType: "DSI-IT-01",
+      formCode: "FRM-TEST",
+      beneficiaryName: "Test Plancher",
+      beneficiaryDepartment: "Technologies de l'Information",
+      beneficiarySite: "Siège",
+      authorizedBy: "Vérificateur",
+      dsiTitle: "Chef de Service DSI",
+      resourceType: "Équipement Informatique",
+      items: [{ stockItemId: idPlancher }]
+    })
+  });
+  const idFichePlancher: string | undefined = fichePlancher.corps?.data?.id;
+  verif("affectation consommant l'article → 201", fichePlancher.status === 201 && !!idFichePlancher, `${fichePlancher.status}`);
+
+  const quantiteTropBasse = await admin.json(`/api/stock/${idPlancher}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quantity: 0 })
+  });
+  verif(
+    "quantité sous le plancher engagé → 400 message explicite",
+    quantiteTropBasse.status === 400 && String(quantiteTropBasse.corps.error).includes("plancher"),
+    `${quantiteTropBasse.status} ${JSON.stringify(quantiteTropBasse.corps)}`
+  );
+
+  const sortieImpossible = await admin.json(`/api/stock/${idPlancher}/movement`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "Sortie Affectation", quantity: 5, performedBy: "Vérificateur" })
+  });
+  verif(
+    "sortie supérieure au disponible → 409 STOCK_NOT_AVAILABLE",
+    sortieImpossible.status === 409 && sortieImpossible.corps.code === "STOCK_NOT_AVAILABLE",
+    `${sortieImpossible.status} ${JSON.stringify(sortieImpossible.corps)}`
+  );
+
+  const serieDupliquee = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} série dupliquée`,
+      category: "Consommables & Pièces",
+      serialNumber: stk1.serialNumber,
+      quantity: 1,
+      minThreshold: 0,
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  verif(
+    "numéro de série déjà utilisé → 409",
+    serieDupliquee.status === 409 && String(serieDupliquee.corps.error).includes("numéro de série"),
+    `${serieDupliquee.status} ${JSON.stringify(serieDupliquee.corps)}`
+  );
+
+  // ══════════ K. RESTITUTION ENDOMMAGÉE & ANNULATION VS HISTORIQUE ══════════
+  console.log("\n── K. Restitution endommagée, annulation ──");
+  const articleFragile = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} portable fragile`,
+      category: "Laptops & Portables",
+      brand: "Test",
+      model: "CH3-FRAGILE",
+      serialNumber: `${marqueCh3}-SN4`,
+      quantity: 1,
+      minThreshold: 0,
+      unitPriceMAD: 8000,
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  const idFragile: string | undefined = articleFragile.corps?.data?.id;
+  const nomFragile: string = articleFragile.corps?.data?.name;
+
+  const ficheFragile = await admin.json("/api/assignments", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      templateType: "DSI-IT-01",
+      formCode: "FRM-TEST",
+      beneficiaryName: "Test Fragile",
+      beneficiaryDepartment: "Technologies de l'Information",
+      beneficiarySite: "Siège",
+      authorizedBy: "Vérificateur",
+      dsiTitle: "Chef de Service DSI",
+      resourceType: "Équipement Informatique",
+      items: [{ stockItemId: idFragile }]
+    })
+  });
+  const ficheFragileData = ficheFragile.corps?.data;
+  const idFicheFragile = ficheFragileData?.id;
+  verif("affectation du portable → 201 fiche Active", ficheFragile.status === 201 && ficheFragileData?.status === "Active");
+
+  let etat = await lireData();
+  let articleLu = etat.articles.find((a: any) => a.id === idFragile);
+  verif(
+    "après affectation : Affecté, dispo 0, alloué 1",
+    articleLu?.status === "Affecté" && articleLu?.availableQty === 0 && articleLu?.allocatedQty === 1,
+    JSON.stringify(articleLu && { s: articleLu.status, d: articleLu.availableQty, a: articleLu.allocatedQty })
+  );
+
+  const retourCassee = await admin.json(`/api/assignments/${idFicheFragile}/return`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      cause: "Fin de mission",
+      equipmentCondition: "Écran cassé, châssis fendu",
+      actionTaken: "Remise en stock disponible",
+      inspectedBy: "Vérificateur Chantier 3",
+      notes: "Test restitution dégradée"
+    })
+  });
+  verif(
+    "restitution d'un matériel CASSÉ → 200 (acceptée)",
+    retourCassee.status === 200,
+    `${retourCassee.status} ${JSON.stringify(retourCassee.corps).slice(0, 200)}`
+  );
+
+  etat = await lireData();
+  articleLu = etat.articles.find((a: any) => a.id === idFragile);
+  const ficheLue = etat.affectations.find((f: any) => f.id === idFicheFragile);
+  verif(
+    "matériel cassé FORCÉ en maintenance (jamais redevient disponible automatiquement) — statut, quantités",
+    ficheLue?.status === "Restitué" &&
+      articleLu?.status === "En Maintenance" &&
+      articleLu?.maintenanceQty === 1 &&
+      articleLu?.availableQty === 0 &&
+      articleLu?.allocatedQty === 0,
+    JSON.stringify(articleLu && { s: articleLu.status, m: articleLu.maintenanceQty, d: articleLu.availableQty })
+  );
+  verif(
+    "mouvement « Envoi Maintenance » tracé",
+    etat.mouvements.some((m: any) => m.itemName === nomFragile && m.type === "Envoi Maintenance")
+  );
+
+  const notifsEndommage = await admin.json("/api/notifications");
+  verif(
+    "notification MATERIEL_ENDOMMAGE ouverte",
+    (notifsEndommage.corps?.data?.items ?? []).some(
+      (n: any) => n.type === "MATERIEL_ENDOMMAGE" && n.entiteId === idFragile && n.statut === "OUVERTE"
+    )
+  );
+
+  const secondeRestitution = await admin.json(`/api/assignments/${idFicheFragile}/return`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cause: "Doublon", equipmentCondition: "Bon état d'usage" })
+  });
+  verif(
+    "seconde restitution de la même fiche → 409 ASSIGNMENT_ALREADY_RETURNED",
+    secondeRestitution.status === 409 && secondeRestitution.corps.code === "ASSIGNMENT_ALREADY_RETURNED",
+    `${secondeRestitution.status} ${JSON.stringify(secondeRestitution.corps)}`
+  );
+
+  const suppressionHistorique = await admin.json(`/api/assignments/${idFicheFragile}`, { method: "DELETE" });
+  verif(
+    "suppression d'une fiche RESTITUÉE → 400 (historique immuable)",
+    suppressionHistorique.status === 400 && String(suppressionHistorique.corps.error).toLowerCase().includes("active"),
+    `${suppressionHistorique.status} ${JSON.stringify(suppressionHistorique.corps)}`
+  );
+
+  // Une fiche ACTIVE, elle, peut être annulée : le matériel réintègre le stock.
+  const articleAnnulable = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} écran annulable`,
+      category: "Postes Fixes & Écrans",
+      brand: "Test",
+      model: "CH3-ANN",
+      serialNumber: `${marqueCh3}-SN5`,
+      quantity: 1,
+      minThreshold: 0,
+      unitPriceMAD: 900,
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  const idAnnulable: string | undefined = articleAnnulable.corps?.data?.id;
+  const nomAnnulable: string = articleAnnulable.corps?.data?.name;
+  const ficheAnnulable = await admin.json("/api/assignments", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      templateType: "DSI-IT-01",
+      formCode: "FRM-TEST",
+      beneficiaryName: "Test Annulation",
+      beneficiaryDepartment: "Technologies de l'Information",
+      beneficiarySite: "Siège",
+      authorizedBy: "Vérificateur",
+      dsiTitle: "Chef de Service DSI",
+      resourceType: "Équipement Informatique",
+      items: [{ stockItemId: idAnnulable }]
+    })
+  });
+  const ficheAnnulableData = ficheAnnulable.corps?.data;
+  const annulation = await admin.json(`/api/assignments/${ficheAnnulableData?.id}`, { method: "DELETE" });
+  etat = await lireData();
+  const ficheAnnulee = etat.affectations.find((f: any) => f.id === ficheAnnulableData?.id);
+  const articleAnnule = etat.articles.find((a: any) => a.id === idAnnulable);
+  verif(
+    "annulation fiche active → fiche « Annulée », matériel restauré",
+    annulation.status === 200 &&
+      ficheAnnulee?.status === "Annulée" &&
+      articleAnnule?.status === "En Stock" &&
+      articleAnnule?.availableQty === 1 &&
+      articleAnnule?.allocatedQty === 0,
+    `annulation=${annulation.status} fiche=${ficheAnnulee?.status} article=${articleAnnule?.status}/${articleAnnule?.availableQty}`
+  );
+  verif(
+    "mouvement « Annulation Affectation » tracé",
+    etat.mouvements.some((m: any) => m.itemName === nomAnnulable && m.type === "Annulation Affectation")
+  );
+
+  // ══════════ L. GARANTIES EN BASE : AUDIT, IMMUTABILITÉ, CONTRAINTES ══════════
+  console.log("\n── L. Base de données (journal, triggers, contraintes) ──");
+  const db = new PrismaClient();
+
+  const jaCreation = await db.journalAudit.findFirst({
+    where: { action: "STOCK_ITEM_CREATED", entiteId: idSousSeuil }
+  });
+  verif(
+    "audit : STOCK_ITEM_CREATED avec valeursApres + utilisateur",
+    !!jaCreation && jaCreation.valeursApres != null && jaCreation.utilisateurId != null
+  );
+
+  const jaRetour = await db.journalAudit.findFirst({
+    where: { action: "RETURN_CREATED", entiteId: idFicheFragile }
+  });
+  verif(
+    "audit : RETURN_CREATED avec avant/après détaillés",
+    !!jaRetour && jaRetour.valeursAvant != null && jaRetour.valeursApres != null
+  );
+
+  const jaAnnulation = await db.journalAudit.findFirst({
+    where: { action: "ASSIGNMENT_CANCELLED", entiteId: ficheAnnulableData?.id }
+  });
+  verif("audit : ASSIGNMENT_CANCELLED tracé", !!jaAnnulation);
+
+  // Le journal est immuable : un UPDATE brut doit être bloqué par le trigger…
+  let updateBrutBloque = false;
+  try {
+    await db.$executeRaw`UPDATE journal_audit SET details = details WHERE id = ${jaCreation!.id}`;
+  } catch {
+    updateBrutBloque = true;
+  }
+  verif("trigger : UPDATE direct du journal REFUSÉ", updateBrutBloque);
+
+  // …sauf via la porte d'échap. documentée app.purge_journaux (purges encadrées).
+  let porteEchapFonctionne = false;
+  try {
+    await db.$transaction([
+      db.$executeRaw`SELECT set_config('app.purge_journaux', 'autorisee', true)`,
+      db.$executeRaw`UPDATE journal_audit SET details = details WHERE id = ${jaCreation!.id}`
+    ]);
+    porteEchapFonctionne = true;
+  } catch {
+    porteEchapFonctionne = false;
+  }
+  verif("trigger : purge encadrée par app.purge_journaux AUTORISÉE", porteEchapFonctionne);
+
+  // L'invariant des compartiments est vérifié PAR LA BASE, pas seulement par le code.
+  let checkQuantitesBloque = false;
+  try {
+    await db.$executeRaw`UPDATE articles_stock SET quantity = quantity - 50 WHERE id = ${idSousSeuil}`;
+  } catch {
+    checkQuantitesBloque = true;
+  }
+  verif("CHECK base : quantités incohérentes (3 compartiments) REFUSÉES", checkQuantitesBloque);
+
+  const indexPartiels = await db.$queryRaw<{ indexname: string }[]>`
+    SELECT indexname FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN ('uq_article_numero_serie', 'uq_affectation_imei', 'uq_notification_alerte_ouverte')
+  `;
+  verif(
+    "base : 3 index partiels uniques posés",
+    indexPartiels.length === 3,
+    indexPartiels.map((i) => i.indexname).join(", ")
+  );
+
+  // Immutabilité vérifiée COMPORTEMENTALEMENT (critère principal) :
+  // un UPDATE/DELETE brut sur l'historique doit être refusé par la base,
+  // quel que soit le nom du trigger qui l'interdit.
+  let mouvementUpdateBloque = false;
+  try {
+    await db.$executeRaw`UPDATE mouvements_stock SET notes = notes WHERE id = (SELECT id FROM mouvements_stock LIMIT 1)`;
+  } catch {
+    mouvementUpdateBloque = true;
+  }
+  verif("base : UPDATE direct d'un MOUVEMENT REFUSÉ (immutabilité)", mouvementUpdateBloque);
+
+  let retourSupprimeBloque = false;
+  try {
+    await db.$executeRaw`DELETE FROM retours_affectation WHERE id = (SELECT id FROM retours_affectation LIMIT 1)`;
+  } catch {
+    retourSupprimeBloque = true;
+  }
+  verif("base : DELETE direct d'un RETOUR REFUSÉ (immutabilité)", retourSupprimeBloque);
+
+  // Contrôle structurel complémentaire : au moins un trigger utilisateur
+  // sur chacune des trois tables historiques — indépendamment de son nom.
+  const tablesImmuables = await db.$queryRaw<{ nom_table: string }[]>`
+    SELECT DISTINCT c.relname AS "nom_table"
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    WHERE c.relname IN ('journal_audit', 'mouvements_stock', 'retours_affectation')
+      AND NOT t.tgisinternal
+  `;
+  verif(
+    "base : triggers présents sur les 3 tables historiques",
+    tablesImmuables.length === 3,
+    tablesImmuables.map((t) => t.nom_table).sort().join(", ")
+  );
+
+  // Déduplication des alertes : une seule OUVERTE par (type, entité), garantie SQL.
+  const entiteDedup = `${marqueCh3}-dedup`;
+  let dedupBloque = false;
+  try {
+    await db.notification.create({
+      data: { type: "STOCK_FAIBLE", titre: "Test dédup 1", message: "-", entite: "ArticleStock", entiteId: entiteDedup }
+    });
+    await db.notification.create({
+      data: { type: "STOCK_FAIBLE", titre: "Test dédup 2", message: "-", entite: "ArticleStock", entiteId: entiteDedup }
+    });
+  } catch {
+    dedupBloque = true;
+  }
+  verif("index partiel : deuxième alerte OUVERTE pour la même entité REFUSÉE", dedupBloque);
+  await db.notification.deleteMany({ where: { entiteId: entiteDedup } }).catch(() => undefined);
+
+  const ligneIdem = await db.requeteIdempotente.findUnique({ where: { cle: `POST /api#${cleIdem}` } });
+  verif(
+    "idempotence : réponse 201 persistée avec son corps",
+    !!ligneIdem && ligneIdem.statusReponse === 201 && ligneIdem.corpsReponse != null,
+    JSON.stringify(ligneIdem && ligneIdem.statusReponse)
+  );
+
+  // Nettoyage : les articles de test sont libérés puis archivés (soft delete).
+  await admin.json(`/api/assignments/${idFichePlancher}`, { method: "DELETE" });
+  for (const idTest of [idSousSeuil, idArticleIdem, idPlancher, idAnnulable]) {
+    if (estUuid(idTest)) await admin.json(`/api/stock/${idTest}`, { method: "DELETE" }).catch(() => undefined);
+  }
+  const donneesNettoyees = await lireData();
+  verif(
+    "nettoyage : articles de test archivés (soft delete), absents des listes",
+    ![idSousSeuil, idArticleIdem, idPlancher, idAnnulable].some((id) =>
+      donneesNettoyees.articles.some((a: any) => a.id === id)
+    )
+  );
+  await db.$disconnect();
+
+  console.log(echecs === 0 ? "\nTOUS LES CONTRÔLES PASSENT (chantiers 2b + 3)" : `\nNON-RÉGRESSION : ${echecs} ÉCHEC(S)`);
   process.exit(echecs === 0 ? 0 : 1);
 }
 

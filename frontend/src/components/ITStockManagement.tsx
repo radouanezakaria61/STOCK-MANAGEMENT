@@ -60,6 +60,19 @@ export default function ITStockManagement({
   const [showAdjustModal, setShowAdjustModal] = useState<ITStockItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Clé d'idempotence (chantier 3) : régénérée à chaque ouverture de fenêtre,
+  // stable pendant toute la vie de la saisie — un double clic ou un retry
+  // réseau sur « Enregistrer » ne crée jamais l'article deux fois.
+  const [cleIdempotence, setCleIdempotence] = useState(() => crypto.randomUUID());
+  const ouvrirAjout = () => {
+    setCleIdempotence(crypto.randomUUID());
+    setShowAddModal(true);
+  };
+  const ouvrirAjustement = (item: ITStockItem) => {
+    setCleIdempotence(crypto.randomUUID());
+    setShowAdjustModal(item);
+  };
+
   // New Item Form State
   const [newItemForm, setNewItemForm] = useState({
     name: "",
@@ -132,7 +145,10 @@ export default function ITStockManagement({
     try {
       const res = await fetch("/api/stock", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cle-Idempotence": cleIdempotence
+        },
         body: JSON.stringify({
           ...newItemForm,
           performedBy: currentUser ? `${currentUser.name} (${currentUser.jobTitle})` : "Admin Système"
@@ -171,7 +187,10 @@ export default function ITStockManagement({
     try {
       const res = await fetch(`/api/stock/${showAdjustModal.id}/movement`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cle-Idempotence": cleIdempotence
+        },
         body: JSON.stringify({
           type: adjustForm.type,
           quantity: adjustForm.quantity,
@@ -305,9 +324,9 @@ export default function ITStockManagement({
         </div>
 
         {/* Action Buttons: Add Stock */}
-        <div className="flex items-center flex-wrap gap-2.5 w-full md:w-auto">
-          <button
-            onClick={() => setShowAddModal(true)}
+          <div className="flex items-center flex-wrap gap-2.5 w-full md:w-auto">
+            <button
+              onClick={ouvrirAjout}
             className="px-4 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
           >
             <Plus size={14} />
@@ -500,9 +519,9 @@ export default function ITStockManagement({
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             {/* Adjust / Movement Button */}
-                            <button
-                              onClick={() => {
-                                setShowAdjustModal(item);
+                              <button
+                                onClick={() => {
+                                  ouvrirAjustement(item);
                                 setAdjustForm({
                                   type: "Entrée Achat",
                                   quantity: 1,

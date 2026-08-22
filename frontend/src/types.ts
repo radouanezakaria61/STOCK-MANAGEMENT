@@ -13,6 +13,28 @@ export interface Societe {
   createdAt: string;
 }
 
+// Notification interne (chantier 3) — servie par GET /api/notifications.
+export interface NotificationInterne {
+  id: string;
+  type:
+    | "STOCK_FAIBLE"
+    | "MATERIEL_ENDOMMAGE"
+    | "MAINTENANCE_DEMARREE"
+    | "MAINTENANCE_TERMINEE"
+    | "INCOHERENCE_DONNEES"
+    | "INTERVENTION_ADMIN"
+    | string;
+  titre: string;
+  message: string;
+  statut: "OUVERTE" | "LUE" | "RESOLUE" | string;
+  entite?: string | null;
+  entiteId?: string | null;
+  cibleOnglet?: string | null;
+  creeLe: string;
+  lueLe?: string | null;
+  resolueLe?: string | null;
+}
+
 // Rôles RBAC (matrice §5.2) — codes enum anglais, libellés français via
 // LIBELLES_ROLES dans App.tsx.
 export type UserRole =

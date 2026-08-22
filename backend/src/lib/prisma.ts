@@ -69,3 +69,21 @@ export const prisma = client.$extends({
     }
   }
 });
+
+// Client transactionnel : le type du callback $transaction du client ÉTENDU
+// (les services ne reçoivent jamais un tx du client brut). Dérivé ici pour
+// rester exact quelle que soit la version de Prisma.
+export type Tx = Parameters<Parameters<(typeof prisma)["$transaction"]>[0]>[0];
+
+/**
+ * Verrou consultatif de TRANSACTION sérialisant la génération des références
+ * métier entre créateurs concurrents : sans lui, deux écritures simultanées
+ * calculent le même numéro et l'une viole l'unicité de `reference` après
+ * avoir déjà écrit ses quantités. Libéré automatiquement au commit/rollback.
+ *
+ * `pg_advisory_xact_lock()` retourne `void`, colonne que $queryRaw refuse de
+ * désérialiser (P2010) : on l'évalue dans un WHERE pour obtenir un Int.
+ */
+export async function verrouillerReferences(tx: Tx): Promise<void> {
+  await tx.$queryRaw`SELECT 1 WHERE pg_advisory_xact_lock(hashtext('gsit.references')) IS NULL`;
+}

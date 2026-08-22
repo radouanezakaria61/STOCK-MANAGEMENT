@@ -160,17 +160,21 @@ model Session {
 }
 
 // Journal d'audit en écriture seule (AGENTS.md règle 3) : aucune modification,
-// aucune suppression. Le chantier 3 y écrira valeursAvant/valeursApres depuis
-// chaque transaction métier ; le 2b y trace déjà connexions, refus et
-// déconnexions. Jamais de mot de passe ni de secret dans ce journal.
+// aucune suppression. Chantier 3 : valeursAvant/valeursApres (Jsonb) écrites
+// depuis chaque transaction métier ; le 2b y trace déjà connexions, refus et
+// déconnexions. L'immuabilité est aussi garantie côté PostgreSQL par le
+// trigger `journal_audit_immuable` (migration 20260823_chantier3). Jamais de
+// mot de passe ni de secret dans ce journal.
 model JournalAudit {
   id               String   @id @default(uuid())
-  action           String // LOGIN, LOGIN_REFUSE, LOGOUT, CHANGEMENT_MOT_DE_PASSE…
+  action           String // LOGIN_SUCCESS, LOGIN_FAILED, LOGOUT, PASSWORD_CHANGED, ASSIGNMENT_CREATED…
   utilisateurId    String?  @map("utilisateur_id") // null si compte inexistant
   identifiantTente String?  @map("identifiant_tente")
   entite           String?
   entiteId         String?  @map("entite_id")
   details          Json?
+  valeursAvant     Json?    @map("valeurs_avant")
+  valeursApres     Json?    @map("valeurs_apres")
   adresseIp        String?  @map("adresse_ip")
   agentUtilisateur String?  @map("agent_utilisateur")
   creeLe           DateTime @default(now()) @map("cree_le")
@@ -179,7 +183,48 @@ model JournalAudit {
 
   @@index([creeLe])
   @@index([action])
+  @@index([utilisateurId])
+  @@index([entite, entiteId])
   @@map("journal_audit")
+}
+
+// ───────────────────── NOTIFICATIONS INTERNES (chantier 3) ────────────
+// Aucun email/SMS simulé : canal applicatif interne uniquement. La
+// déduplication des alertes persistantes (stock sous seuil) est assurée par
+// l'index unique partiel `notifications_alerte_ouverte` : une seule
+// notification OUVERTE par (type, entité), quel que soit le nombre de
+// rafraîchissements ou la concurrence.
+model Notification {
+  id          String    @id @default(uuid())
+  type        String // STOCK_FAIBLE | MATERIEL_ENDOMMAGE | MAINTENANCE_DEMARREE | MAINTENANCE_TERMINEE | INCOHERENCE_DONNEES | INTERVENTION_ADMIN
+  titre       String
+  message     String
+  statut      String    @default("OUVERTE") // OUVERTE | LUE | RESOLUE
+  entite      String?
+  entiteId    String?   @map("entite_id")
+  cibleOnglet String?   @map("cible_onglet") // onglet frontend à ouvrir au clic
+  creeLe      DateTime  @default(now()) @map("cree_le")
+  lueLe       DateTime? @map("lue_le")
+  resolueLe   DateTime? @map("resolue_le")
+
+  @@index([statut, creeLe])
+  @@index([type, entiteId])
+  @@map("notifications")
+}
+
+// Idempotence serveur (chantier 3) : le client envoie `X-Cle-Idempotence` ;
+// la première requête enregistre sa clé et sa réponse, toute retransmission
+// (double clic, retry réseau) reçoit la réponse d'origine au lieu de créer un
+// doublon. Les clés expirent après 24 h (purge à chaque démarrage).
+model RequeteIdempotente {
+  cle            String   @id @map("cle")
+  empreinteCorps String   @map("empreinte_corps") // SHA-256 du corps POST : même clé + corps différent = conflit 409
+  // 0 = réservation en cours (requête en vol) ; la réponse est remplie à la fin.
+  statusReponse  Int      @default(0) @map("status_reponse")
+  corpsReponse   Json?    @map("corps_reponse")
+  creeLe         DateTime @default(now()) @map("cree_le")
+
+  @@map("requetes_idempotentes")
 }
 
 // ──────────────────────────── STOCK IT ────────────────────────────────
@@ -196,6 +241,10 @@ model ArticleStock {
   quantity       Int
   availableQty   Int       @map("quantite_disponible")
   allocatedQty   Int       @map("quantite_affectee")
+  // Chantier 3 : les unités parties en maintenance sortent du compteur
+  // « affecté » sans redevenir disponibles. Invariant vérifié par contrainte
+  // PostgreSQL : quantity = disponible + affectée + maintenance.
+  maintenanceQty Int       @default(0) @map("quantite_maintenance")
   minThreshold   Int       @map("seuil_minimum")
   unitPriceMAD   Decimal   @db.Decimal(12, 2) @map("prix_unitaire_mad")
   totalValueMAD  Decimal   @db.Decimal(12, 2) @map("valeur_totale_mad")

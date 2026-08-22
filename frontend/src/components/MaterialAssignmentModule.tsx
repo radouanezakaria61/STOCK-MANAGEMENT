@@ -65,6 +65,15 @@ export default function MaterialAssignmentModule({
   const [selectedAssignmentForReturn, setSelectedAssignmentForReturn] = useState<MaterialAssignment | null>(null);
   const [selectedAssignmentForReturnPrint, setSelectedAssignmentForReturnPrint] = useState<MaterialAssignment | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  // Clé d'idempotence (chantier 3) : régénérée à l'ouverture de la fenêtre de
+  // création, stable pendant la saisie — un double clic sur « Valider » ne
+  // crée jamais deux fiches, et ne consomme pas deux fois le stock.
+  const [cleIdempotenceAffectation, setCleIdempotenceAffectation] = useState(() => crypto.randomUUID());
+  const ouvrirCreation = () => {
+    setCleIdempotenceAffectation(crypto.randomUUID());
+    setShowCreateModal(true);
+  };
   const [loadingAction, setLoadingAction] = useState(false);
 
   // Global Escape key listener to close modals easily
@@ -355,7 +364,10 @@ export default function MaterialAssignmentModule({
 
       const res = await fetch("/api/assignments", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cle-Idempotence": cleIdempotenceAffectation
+        },
         body: JSON.stringify(payloadBody)
       });
 
@@ -577,8 +589,8 @@ export default function MaterialAssignmentModule({
             </button>
           </div>
 
-          <button
-            onClick={() => setShowCreateModal(true)}
+            <button
+              onClick={ouvrirCreation}
             className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer"
           >
             <Plus size={14} /> Nouvelle Fiche d'Affectation
@@ -1846,11 +1858,12 @@ export default function MaterialAssignmentModule({
           <div className="bg-white rounded-2xl max-w-4xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 my-8 space-y-6 print:shadow-none print:border-none print:m-0 print:p-4 print:max-w-none relative">
             
             {/* Sticky Action Bar (Hidden in Print) */}
-            <div className="sticky -top-6 -mt-2 -mx-2 sm:-mx-4 px-4 py-3 bg-white/95 backdrop-blur-md rounded-xl border-b border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 z-20 print:hidden">
+            <div className="sticky top-0 -mt-2 -mx-2 sm:-mx-4 px-4 py-3 bg-white/95 backdrop-blur-md rounded-xl border-b border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 z-20 print:hidden">
               <div className="flex items-center gap-2">
-                <Printer size={18} className="text-indigo-600" />
+                <Printer size={18} className="text-indigo-600 shrink-0" />
                 <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                  Fiche Officielle d'Affectation & Prise en Charge
+                  <span className="hidden sm:inline">Fiche Officielle d'Affectation &amp; Prise en Charge</span>
+                  <span className="sm:hidden">Fiche d'Affectation</span>
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -1871,7 +1884,7 @@ export default function MaterialAssignmentModule({
                 <button
                   type="button"
                   onClick={() => setSelectedAssignmentForPrint(null)}
-                  className="bg-slate-800 hover:bg-red-600 text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                 >
                   <X size={15} /> Fermer
                 </button>
@@ -2409,36 +2422,6 @@ export default function MaterialAssignmentModule({
                 </div>
               )}
 
-            </div>
-
-            {/* Bottom Sticky Action Bar */}
-            <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 print:hidden">
-              <span className="text-xs text-slate-500 font-medium">
-                Document certifié conforme DSI • Vous pouvez l'exporter en PDF ou l'imprimer sur papier A4.
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => exportAssignmentToPDF(selectedAssignmentForPrint)}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                >
-                  <Download size={14} /> Exporter PDF
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                >
-                  <Printer size={14} /> Imprimer (A4)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedAssignmentForPrint(null)}
-                  className="bg-slate-800 hover:bg-red-600 text-white text-xs font-bold px-5 py-2.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-                >
-                  <X size={15} /> Fermer la Fiche
-                </button>
-              </div>
             </div>
 
           </div>

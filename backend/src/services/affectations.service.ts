@@ -1,9 +1,19 @@
-import { prisma } from "../lib/prisma.js";
-import { introuvable, requeteInvalide } from "../lib/erreurs.js";
+import { Prisma } from "@prisma/client";
+import { prisma, verrouillerReferences, type Tx } from "../lib/prisma.js";
+import {
+  introuvable,
+  requeteInvalide,
+  stockIndisponible,
+  dejaAffecte,
+  retourDejaEffectue,
+  transitionInvalide
+} from "../lib/erreurs.js";
 import { dateDuJour, numeroSuivant, pad3, versDate } from "../lib/ids.js";
 import { nouvelleReferenceMouvement } from "./stock.service.js";
-
-type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
+import { exigerTransition, STATUTS_MATERIEL } from "../lib/machine-etats.js";
+import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
+import type { ContexteActeur } from "../lib/acteur.js";
 
 // ── Lectures ──────────────────────────────────────────────────────────
 
@@ -14,7 +24,7 @@ export async function listerAffectations() {
   });
 }
 
-// ── Création d'une affectation ───────────────────────────────────────
+// ── Création d'une affectation (atomique) ─────────────────────────────
 
 export interface LigneAffectationEntree {
   stockItemId?: string;
@@ -55,6 +65,8 @@ export interface EntreeAffectation {
   incidentRemarks?: string;
   items?: LigneAffectationEntree[];
   notes?: string;
+  /** Réaffectation : référence/id de la fiche restituée qui précède. */
+  reaffecteApresId?: string;
 }
 
 interface LigneConstruite {
@@ -70,9 +82,18 @@ interface LigneConstruite {
   accessories: string[];
 }
 
+interface EtatArticleApres {
+  id: string;
+  reference: string;
+  nom: string;
+  disponible: number;
+  affectee: number;
+  maintenance: number;
+}
+
 // Génère la référence métier AFF-DSI-AAAA-NNN à partir des références de
 // l'année courante. L'année est dynamique ; la séquence repart à 001 chaque
-// 1er janvier sans risquer de collision avec les années antérieures.
+// 1er janvier. Correct uniquement sous `verrouillerReferences`.
 async function prochaineReference(tx: Tx): Promise<string> {
   const annee = new Date().getFullYear();
   const refsAnneeCourante = (
@@ -84,13 +105,7 @@ async function prochaineReference(tx: Tx): Promise<string> {
   return `AFF-DSI-${annee}-${pad3(numero)}`;
 }
 
-async function trouverArticle(tx: Tx, identifiant: string) {
-  return tx.articleStock.findFirst({
-    where: { OR: [{ id: identifiant }, { reference: identifiant }] }
-  });
-}
-
-export async function creerAffectation(data: EntreeAffectation) {
+export async function creerAffectation(data: EntreeAffectation, acteur?: ContexteActeur) {
   const {
     templateType,
     formCode,
@@ -120,7 +135,8 @@ export async function creerAffectation(data: EntreeAffectation) {
     restitutedDeviceCondition,
     incidentRemarks,
     items,
-    notes
+    notes,
+    reaffecteApresId
   } = data;
 
   if (!beneficiaryName || !beneficiaryDepartment) {
@@ -131,93 +147,172 @@ export async function creerAffectation(data: EntreeAffectation) {
 
   const dateAffectation = versDate(assignedDate) ?? new Date();
 
-  // Résolution des articles AVANT écriture : référence ou UUID acceptés,
-  // disponibilité contrôlée strictement avant toute mutation.
-  const articlesResolus = new Map<string, NonNullable<Awaited<ReturnType<typeof trouverArticle>>>>();
-
-  if (Array.isArray(items) && items.length > 0) {
-    for (const itemInput of items) {
-      if (itemInput.stockItemId && itemInput.stockItemId !== "STK-DIRECT") {
-        const stockItem = await prisma.articleStock.findFirst({
-          where: { OR: [{ id: itemInput.stockItemId }, { reference: itemInput.stockItemId }] }
-        });
-        if (!stockItem) {
-          throw requeteInvalide(
-            `Article en stock introuvable : ${itemInput.stockItemId}`
-          );
-        }
-        if ((stockItem.availableQty || 0) <= 0) {
-          throw requeteInvalide(
-            `Le matériel « ${stockItem.name} » (${stockItem.serialNumber || stockItem.assetTag}) n'est plus disponible en stock (Quantité disponible : 0).`
-          );
-        }
-        articlesResolus.set(itemInput.stockItemId, stockItem);
-      }
-    }
+  // Identifiants d'articles visés (« STK-DIRECT » = saisie directe SIM, hors stock).
+  const identifiantsVises = new Set<string>();
+  for (const item of Array.isArray(items) ? items : []) {
+    const sid = item?.stockItemId;
+    if (sid && sid !== "STK-DIRECT") identifiantsVises.add(sid);
   }
 
   const nouvelle = await prisma.$transaction(async (tx) => {
+    await verrouillerReferences(tx);
+
+    // Lien de réaffectation vérifié AVANT toute écriture.
+    let referencePrecedente: string | null = null;
+    if (reaffecteApresId) {
+      const precedente = await tx.affectation.findFirst({
+        where: { OR: [{ id: reaffecteApresId }, { reference: reaffecteApresId }] },
+        select: { id: true, reference: true, status: true }
+      });
+      if (!precedente) {
+        throw introuvable("Fiche précédente introuvable pour la réaffectation.");
+      }
+      if (precedente.status !== "Restitué") {
+        throw requeteInvalide(
+          "Une réaffectation suppose que la fiche précédente a été restituée."
+        );
+      }
+      referencePrecedente = precedente.reference;
+    }
+
     const reference = await prochaineReference(tx);
+
+    // Résolution identifiant → UUID, puis verrouillage pessimiste des lignes
+    // articles (SELECT … FOR UPDATE) : deux affectations concurrentes visant
+    // le même article se sérialisent ici, avant toute lecture de quantité.
+    const resolution = new Map<string, string>();
+    for (const identifiant of identifiantsVises) {
+      const trouve = await tx.articleStock.findFirst({
+        where: { OR: [{ id: identifiant }, { reference: identifiant }] },
+        select: { id: true }
+      });
+      if (!trouve) {
+        throw introuvable(`Article en stock introuvable : ${identifiant}`);
+      }
+      resolution.set(identifiant, trouve.id);
+    }
+    const idsVerrou = [...new Set(resolution.values())];
+    if (idsVerrou.length > 0) {
+      await tx.$queryRaw`SELECT id FROM articles_stock WHERE id IN (${Prisma.join(idsVerrou)}) FOR UPDATE`;
+    }
+
+    // Relecture POST-verrouillage : seule source de vérité des quantités.
+    // Un article archivé (soft delete) sort du findMany → refus ci-dessous.
+    const articlesVerrouilles =
+      idsVerrou.length > 0
+        ? await tx.articleStock.findMany({ where: { id: { in: idsVerrou } } })
+        : [];
+    const articleParId = new Map(articlesVerrouilles.map((a) => [a.id, a]));
+
+    // Besoin agrégé : le même article peut figurer sur plusieurs lignes.
+    const besoin = new Map<string, number>();
+    for (const idArticle of resolution.values()) {
+      besoin.set(idArticle, (besoin.get(idArticle) ?? 0) + 1);
+    }
+
+    for (const [idArticle, nombre] of besoin) {
+      const article = articleParId.get(idArticle);
+      if (!article) {
+        throw introuvable("Un des articles visés n'existe plus dans le stock.");
+      }
+      if (
+        article.status !== STATUTS_MATERIEL.DISPONIBLE &&
+        article.status !== STATUTS_MATERIEL.AFFECTE
+      ) {
+        throw transitionInvalide(
+          `Le matériel « ${article.name} » (${article.reference}) est « ${article.status} » : il ne peut pas être affecté en l'état.`
+        );
+      }
+      if (article.availableQty < nombre) {
+        if (article.availableQty <= 0 && article.allocatedQty > 0) {
+          throw dejaAffecte(
+            `Le matériel « ${article.name} » (${article.reference}) est entièrement affecté : aucune unité disponible.`
+          );
+        }
+        throw stockIndisponible(
+          `Stock insuffisant pour « ${article.name} » (${article.reference}) : ${article.availableQty} disponible(s), ${nombre} demandé(s).`
+        );
+      }
+    }
+
+    // Écritures : décrément, mouvement et lignes partagent la transaction.
     const lignesConstruites: LigneConstruite[] = [];
+    const etatsApres: EtatArticleApres[] = [];
+    // Disponibilité locale décroissante quand plusieurs lignes visent le
+    // même article dans une seule demande.
+    const disponibleLocal = new Map<string, number>();
+    for (const idArticle of besoin.keys()) {
+      disponibleLocal.set(idArticle, articleParId.get(idArticle)!.availableQty);
+    }
 
     if (Array.isArray(items) && items.length > 0) {
       for (const itemInput of items) {
-        const stockItem = itemInput.stockItemId
-          ? articlesResolus.get(itemInput.stockItemId) ??
-            (itemInput.stockItemId === "STK-DIRECT"
-              ? null
-              : await trouverArticle(tx, itemInput.stockItemId))
-          : null;
-        if (stockItem && itemInput.stockItemId !== "STK-DIRECT") {
-          if (stockItem.availableQty > 0) {
-            await tx.articleStock.update({
-              where: { id: stockItem.id },
-              data: {
-                availableQty: { decrement: 1 },
-                allocatedQty: { increment: 1 },
-                status:
-                  stockItem.availableQty - 1 === 0 ? "Affecté" : "En Stock",
-                assignedTo: {
-                  userName: beneficiaryName,
-                  department: beneficiaryDepartment,
-                  assignedDate: dateDuJour()
-                }
-              }
-            });
+        const sid = itemInput.stockItemId;
+        if (!sid || sid === "STK-DIRECT") continue;
+        const idArticle = resolution.get(sid)!;
+        const stockItem = articleParId.get(idArticle)!;
+        const restant = disponibleLocal.get(idArticle)!;
 
-            lignesConstruites.push({
-              stockItemId: stockItem.id,
-              assetTag: stockItem.assetTag || itemInput.assetTag || `IT-${stockItem.reference}`,
-              name: stockItem.name,
-              brand: stockItem.brand,
-              model: stockItem.model,
-              serialNumber:
-                stockItem.serialNumber || itemInput.serialNumber || "SN-STANDARD",
-              category: stockItem.category,
-              specs: itemInput.specs ?? stockItem.specs ?? undefined,
-              condition: itemInput.condition || "Neuf / Excellent état",
-              accessories: itemInput.accessories || [
-                "Chargeur secteur",
-                "Câble d'alimentation"
-              ]
-            });
+        const nouveauDisponible = restant - 1;
+        const nouveauStatut =
+          nouveauDisponible === 0 ? STATUTS_MATERIEL.AFFECTE : stockItem.status;
+        exigerTransition(stockItem.status, nouveauStatut);
 
-            await tx.mouvementStock.create({
-              data: {
-                reference: await nouvelleReferenceMouvement(tx),
-                stockItemId: stockItem.id,
-                itemName: stockItem.name,
-                type: "Sortie Affectation",
-                quantity: 1,
-                performedBy: authorizedBy || "Département Systèmes d'Information",
-                recipient: beneficiaryName,
-                department: beneficiaryDepartment,
-                date: dateAffectation,
-                notes: `Affectation matérielle (${reference}) - ${beneficiaryJobTitle || "Collaborateur"}`
-              }
-            });
+        await tx.articleStock.update({
+          where: { id: stockItem.id },
+          data: {
+            availableQty: { decrement: 1 },
+            allocatedQty: { increment: 1 },
+            status: nouveauStatut,
+            assignedTo: {
+              userName: beneficiaryName,
+              department: beneficiaryDepartment,
+              assignedDate: dateDuJour()
+            }
           }
-        }
+        });
+        disponibleLocal.set(idArticle, nouveauDisponible);
+
+        lignesConstruites.push({
+          stockItemId: stockItem.id,
+          assetTag: stockItem.assetTag || itemInput.assetTag || `IT-${stockItem.reference}`,
+          name: stockItem.name,
+          brand: stockItem.brand,
+          model: stockItem.model,
+          serialNumber:
+            stockItem.serialNumber || itemInput.serialNumber || "SN-STANDARD",
+          category: stockItem.category,
+          specs: itemInput.specs ?? stockItem.specs ?? undefined,
+          condition: itemInput.condition || "Neuf / Excellent état",
+          accessories: itemInput.accessories || [
+            "Chargeur secteur",
+            "Câble d'alimentation"
+          ]
+        });
+
+        await tx.mouvementStock.create({
+          data: {
+            reference: await nouvelleReferenceMouvement(tx),
+            stockItemId: stockItem.id,
+            itemName: stockItem.name,
+            type: "Sortie Affectation",
+            quantity: 1,
+            performedBy: authorizedBy || acteur?.nomUtilisateur || "Département Systèmes d'Information",
+            recipient: beneficiaryName,
+            department: beneficiaryDepartment,
+            date: dateAffectation,
+            notes: `Affectation matérielle (${reference}) - ${beneficiaryJobTitle || "Collaborateur"}`
+          }
+        });
+
+        etatsApres.push({
+          id: stockItem.id,
+          reference: stockItem.reference,
+          nom: stockItem.name,
+          disponible: nouveauDisponible,
+          affectee: stockItem.allocatedQty + 1,
+          maintenance: stockItem.maintenanceQty
+        });
       }
     } else if (hasSmartphone === true || resourceType?.includes("SmartPhone")) {
       // Saisie directe SIM / Smartphone sans sélection d'article en stock
@@ -234,7 +329,7 @@ export async function creerAffectation(data: EntreeAffectation) {
       });
     }
 
-    return tx.affectation.create({
+    const nouvelleFiche = await tx.affectation.create({
       data: {
         reference,
         templateType:
@@ -292,16 +387,56 @@ export async function creerAffectation(data: EntreeAffectation) {
       },
       include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
     });
+
+    // Audit DANS la transaction (AGENTS.md règle 2) : un échec d'audit
+    // annule l'affectation entière.
+    await journaliserDansTx(tx, {
+      action: referencePrecedente
+        ? ACTIONS_AUDIT.REASSIGNMENT_CREATED
+        : ACTIONS_AUDIT.ASSIGNMENT_CREATED,
+      utilisateurId: acteur?.utilisateurId ?? null,
+      adresseIp: acteur?.adresseIp ?? null,
+      agentUtilisateur: acteur?.agentUtilisateur ?? null,
+      entite: "Affectation",
+      entiteId: nouvelleFiche.id,
+      details: {
+        reference: nouvelleFiche.reference,
+        beneficiaire: beneficiaryName,
+        departement: beneficiaryDepartment,
+        articles: etatsApres.map((e) => `${e.reference} (${e.nom})`),
+        reaffecteApres: referencePrecedente
+      },
+      valeursApres: { statut: "Active", articles: etatsApres }
+    });
+
+    return { fiche: nouvelleFiche, etatsApres };
   });
+
+  // Notifications APRÈS commit : alerter ne doit jamais annuler l'opération.
+  for (const etat of nouvelle.etatsApres) {
+    await verifierSeuilStock({
+      id: etat.id,
+      name: etat.nom,
+      reference: etat.reference,
+      availableQty: etat.disponible,
+      minThreshold:
+        (
+          await prisma.articleStock.findUnique({
+            where: { id: etat.id },
+            select: { minThreshold: true }
+          })
+        )?.minThreshold ?? 0
+    });
+  }
 
   return {
     status: 201 as const,
-    message: `Fiche d'affectation ${nouvelle.reference} générée avec succès pour ${beneficiaryName}.`,
-    data: nouvelle
+    message: `Fiche d'affectation ${nouvelle.fiche.reference} générée avec succès pour ${beneficiaryName}.`,
+    data: nouvelle.fiche
   };
 }
 
-// ── Restitution ───────────────────────────────────────────────────────
+// ── Restitution (transactionnelle) ────────────────────────────────────
 
 export interface EntreeRetour {
   returnDate?: string;
@@ -318,7 +453,23 @@ export interface EntreeRetour {
   notes?: string;
 }
 
-export async function restituerAffectation(idOuReference: string, data: EntreeRetour) {
+const ACTIONS_RESTITUTION = [
+  "Remise en stock disponible",
+  "Envoi en maintenance / SAV",
+  "Mise au rebut"
+] as const;
+
+// Un matériel constaté défectueux ne doit JAMAIS redevenir disponible
+// automatiquement (demande chantier 3, point 5) : la remise en stock est
+// forcée vers la maintenance.
+const REGEX_ETAT_DEGRADE =
+  /(endommag|mauvais état|mauvais etat|défectueu|defectueu|cassé|casse\b|hors service|\bhs\b)/i;
+
+export async function restituerAffectation(
+  idOuReference: string,
+  data: EntreeRetour,
+  acteur?: ContexteActeur
+) {
   const {
     returnDate,
     cause,
@@ -335,13 +486,38 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
   } = data;
 
   const dateRetour = versDate(returnDate) ?? new Date();
+  const actionNormale = actionTaken || "Remise en stock disponible";
+  if (!(ACTIONS_RESTITUTION as readonly string[]).includes(actionNormale)) {
+    throw requeteInvalide(
+      `Action de restitution inconnue : « ${actionNormale} ». Actions acceptées : ${ACTIONS_RESTITUTION.join(", ")}.`
+    );
+  }
+  const etatDegrade = REGEX_ETAT_DEGRADE.test(equipmentCondition ?? "");
+
+  const alertesAPublier: (() => Promise<void>)[] = [];
 
   const resultat = await prisma.$transaction(async (tx) => {
-    const affectation = await tx.affectation.findFirst({
+    await verrouillerReferences(tx);
+
+    // Verrou sur la fiche : deux restitutions simultanées se sérialisent ;
+    // la seconde voit le statut déjà « Restitué » et échoue proprement.
+    const existante = await tx.affectation.findFirst({
       where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
+      select: { id: true }
+    });
+    if (!existante) throw introuvable("Fiche d'affectation introuvable.");
+    await tx.$queryRaw`SELECT id FROM affectations WHERE id = ${existante.id} FOR UPDATE`;
+
+    const affectation = await tx.affectation.findUnique({
+      where: { id: existante.id },
       include: { items: { orderBy: { id: "asc" } } }
     });
     if (!affectation) throw introuvable("Fiche d'affectation introuvable.");
+    if (affectation.status !== "Active") {
+      throw retourDejaEffectue(
+        `L'affectation ${affectation.reference} est déjà clôturée (statut : « ${affectation.status} ») : une seconde restitution est impossible.`
+      );
+    }
 
     const retour = await tx.retourAffectation.create({
       data: {
@@ -355,7 +531,7 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
         dataWiped: dataWiped === true,
         bitlockerUnlocked: bitlockerUnlocked === true,
         technicalDiagnosis: technicalDiagnosis || "Matériel inspecté et vérifié conforme.",
-        actionTaken: actionTaken || "Remise en stock disponible",
+        actionTaken: actionNormale,
         inspectedBy: inspectedBy || "Service Informatique",
         notes: notes || ""
       }
@@ -366,43 +542,141 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
       data: { status: "Restitué" }
     });
 
-    // Réintégration ou sortie des matériels selon la décision prise
+    // Verrouillage groupé des articles portés par les lignes.
+    const idsArticles = [
+      ...new Set(
+        affectation.items
+          .filter((l) => l.stockItemId && l.stockItemId !== "STK-DIRECT")
+          .map((l) => l.stockItemId as string)
+      )
+    ];
+    if (idsArticles.length > 0) {
+      await tx.$queryRaw`SELECT id FROM articles_stock WHERE id IN (${Prisma.join(idsArticles)}) FOR UPDATE`;
+    }
+
+    const resumeArticles: Record<string, unknown>[] = [];
+
     for (const ligne of affectation.items) {
+      if (!ligne.stockItemId || ligne.stockItemId === "STK-DIRECT") continue;
       const stockItem = await tx.articleStock.findUnique({
         where: { id: ligne.stockItemId }
       });
       if (!stockItem) continue;
 
-      const donnees: Record<string, unknown> = {
-        allocatedQty: Math.max(0, stockItem.allocatedQty - 1),
-        assignedTo: null
-      };
+      // Décision finale : un matériel dégradé n'est jamais remis disponible.
+      const actionFinale =
+        etatDegrade && actionNormale === "Remise en stock disponible"
+          ? "MAINTENANCE_OBLIGATOIRE"
+          : actionNormale;
 
-      if (actionTaken === "Remise en stock disponible") {
-        donnees["availableQty"] = stockItem.availableQty + 1;
-        donnees["status"] = "En Stock";
-      } else if (actionTaken === "Envoi en maintenance / SAV") {
-        donnees["status"] = "En Maintenance";
-      } else if (actionTaken === "Mise au rebut") {
-        donnees["status"] = "Rebut / Fin de vie";
-        if (stockItem.quantity > 0) donnees["quantity"] = stockItem.quantity - 1;
+      let donnees: Record<string, unknown>;
+      let statutCible: string;
+      let typeMouvement: string;
+
+      if (actionFinale === "Remise en stock disponible") {
+        statutCible = STATUTS_MATERIEL.DISPONIBLE;
+        typeMouvement = "Retour Stock";
+        donnees = {
+          status: statutCible,
+          allocatedQty: Math.max(0, stockItem.allocatedQty - 1),
+          availableQty: stockItem.availableQty + 1,
+          assignedTo: null
+        };
+        const apres = { ...stockItem, ...donnees } as typeof stockItem;
+        alertesAPublier.push(() =>
+          verifierSeuilStock({
+            id: apres.id,
+            name: apres.name,
+            reference: apres.reference,
+            availableQty: apres.availableQty,
+            minThreshold: apres.minThreshold
+          })
+        );
+      } else if (
+        actionFinale === "MAINTENANCE_OBLIGATOIRE" ||
+        actionFinale === "Envoi en maintenance / SAV"
+      ) {
+        statutCible = STATUTS_MATERIEL.MAINTENANCE;
+        typeMouvement = "Envoi Maintenance";
+        donnees = {
+          status: statutCible,
+          allocatedQty: Math.max(0, stockItem.allocatedQty - 1),
+          maintenanceQty: stockItem.maintenanceQty + 1,
+          assignedTo: null
+        };
+        alertesAPublier.push(() =>
+          notifier({
+            type:
+              actionFinale === "MAINTENANCE_OBLIGATOIRE"
+                ? TYPES_NOTIFICATION.MATERIEL_ENDOMMAGE
+                : TYPES_NOTIFICATION.MAINTENANCE_DEMARREE,
+            titre:
+              actionFinale === "MAINTENANCE_OBLIGATOIRE"
+                ? "Matériel retourné en mauvais état"
+                : "Matériel envoyé en maintenance",
+            message:
+              actionFinale === "MAINTENANCE_OBLIGATOIRE"
+                ? `« ${stockItem.name} » (${stockItem.reference}) a été restitué en mauvais état (${equipmentCondition}). Il part en maintenance et ne redevient PAS disponible automatiquement.`
+                : `« ${stockItem.name} » (${stockItem.reference}) est parti en maintenance/SAV suite à la restitution ${affectation.reference}.`,
+            entite: "ArticleStock",
+            entiteId: stockItem.id,
+            cibleOnglet: "stock"
+          })
+        );
+      } else {
+        // Mise au rebut
+        statutCible = STATUTS_MATERIEL.REFORME;
+        typeMouvement = "Mise au Rebut";
+        donnees = {
+          status: statutCible,
+          allocatedQty: Math.max(0, stockItem.allocatedQty - 1),
+          quantity: Math.max(0, stockItem.quantity - 1),
+          assignedTo: null
+        };
       }
 
+      exigerTransition(stockItem.status, statutCible);
       await tx.articleStock.update({ where: { id: stockItem.id }, data: donnees });
+
+      if (statutCible === STATUTS_MATERIEL.REFORME) {
+        await journaliserDansTx(tx, {
+          action: ACTIONS_AUDIT.ITEM_RETIRED,
+          utilisateurId: acteur?.utilisateurId ?? null,
+          adresseIp: acteur?.adresseIp ?? null,
+          agentUtilisateur: acteur?.agentUtilisateur ?? null,
+          entite: "ArticleStock",
+          entiteId: stockItem.id,
+          details: {
+            reference: stockItem.reference,
+            nom: stockItem.name,
+            motif: `Rebut lors de la restitution ${affectation.reference}`,
+            etatConstate: equipmentCondition
+          },
+          valeursAvant: { statut: stockItem.status, quantity: stockItem.quantity },
+          valeursApres: { statut: statutCible, quantity: (donnees["quantity"] as number) ?? stockItem.quantity }
+        });
+      }
 
       await tx.mouvementStock.create({
         data: {
           reference: await nouvelleReferenceMouvement(tx),
           stockItemId: stockItem.id,
           itemName: stockItem.name,
-          type: actionTaken === "Mise au rebut" ? "Mise au Rebut" : "Retour Stock",
+          type: typeMouvement,
           quantity: 1,
-          performedBy: inspectedBy || "Service Informatique",
+          performedBy: inspectedBy || acteur?.nomUtilisateur || "Service Informatique",
           recipient: "Magasin Central IT",
           department: affectation.beneficiaryDepartment,
           date: dateRetour,
-          notes: `Restitution (${cause}) - État: ${equipmentCondition}. ${actionTaken}.`
+          notes: `Restitution (${cause}) - État: ${equipmentCondition}. ${actionNormale}.`
         }
+      });
+
+      resumeArticles.push({
+        reference: stockItem.reference,
+        nom: stockItem.name,
+        statutAvant: stockItem.status,
+        statutApres: statutCible
       });
     }
 
@@ -411,8 +685,30 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
       include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
     });
 
+    await journaliserDansTx(tx, {
+      action: ACTIONS_AUDIT.RETURN_CREATED,
+      utilisateurId: acteur?.utilisateurId ?? null,
+      adresseIp: acteur?.adresseIp ?? null,
+      agentUtilisateur: acteur?.agentUtilisateur ?? null,
+      entite: "Affectation",
+      entiteId: affectation.id,
+      details: {
+        reference: affectation.reference,
+        beneficiaire: affectation.beneficiaryName,
+        cause: retour.cause,
+        etatConstate: retour.equipmentCondition,
+        action: actionNormale,
+        etatDegradeDetecte: etatDegrade,
+        articles: resumeArticles
+      },
+      valeursAvant: { statut: "Active" },
+      valeursApres: { statut: "Restitué", articles: resumeArticles }
+    });
+
     return { assignment: assignmentMisAJour!, retour };
   });
+
+  for (const publier of alertesAPublier) await publier();
 
   return {
     message: `Restitution de matériel enregistrée avec succès pour l'affectation ${resultat.assignment.reference}.`,
@@ -423,26 +719,131 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
   };
 }
 
-// ── Suppression ───────────────────────────────────────────────────────
-// Suppression physique assumée pour les fiches déjà restituées : la fiche
-// disparaît avec ses lignes et son éventuel retour (cascades), mais les
-// mouvements de stock associés sont conservés (FK vers ArticleStock).
-// Une fiche Active est refusée : la supprimer sans restitution laisserait
-// le stock figé (quantités décomptées) et violerait l'historique en
-// écriture seule. La refonte du chantier 6 remplacera tout cela par un
-// soft delete.
+// ── Annulation d'une affectation active ───────────────────────────────
+// Remplace l'ancienne suppression physique : l'historique ne se supprime
+// pas (AGENTS.md règle 3). Une fiche active est ANNULÉE — son matériel
+// réintègre le stock disponible dans la même transaction — et la fiche
+// reste consultable avec le statut « Annulée ». Les fiches restituées ne
+// sont ni modifiables ni supprimables.
 
-export async function supprimerAffectation(idOuReference: string) {
-  const affectation = await prisma.affectation.findFirst({
-    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
+export async function annulerAffectation(
+  idOuReference: string,
+  acteur?: ContexteActeur
+) {
+  const resultat = await prisma.$transaction(async (tx) => {
+    await verrouillerReferences(tx);
+
+    const existante = await tx.affectation.findFirst({
+      where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
+      select: { id: true }
+    });
+    if (!existante) throw introuvable("Affectation introuvable.");
+    await tx.$queryRaw`SELECT id FROM affectations WHERE id = ${existante.id} FOR UPDATE`;
+
+    const affectation = await tx.affectation.findUnique({
+      where: { id: existante.id },
+      include: { items: true }
+    });
+    if (!affectation) throw introuvable("Affectation introuvable.");
+    if (affectation.status !== "Active") {
+      throw requeteInvalide(
+        `Seule une fiche ACTIVE peut être annulée. La fiche ${affectation.reference} est « ${affectation.status} » : elle relève de l'historique, qui ne se modifie ni ne se supprime.`
+      );
+    }
+
+    const idsArticles = [
+      ...new Set(
+        affectation.items
+          .filter((l) => l.stockItemId && l.stockItemId !== "STK-DIRECT")
+          .map((l) => l.stockItemId as string)
+      )
+    ];
+    if (idsArticles.length > 0) {
+      await tx.$queryRaw`SELECT id FROM articles_stock WHERE id IN (${Prisma.join(idsArticles)}) FOR UPDATE`;
+    }
+
+    const alertesAPublier: (() => Promise<void>)[] = [];
+
+    for (const ligne of affectation.items) {
+      if (!ligne.stockItemId || ligne.stockItemId === "STK-DIRECT") continue;
+      const stockItem = await tx.articleStock.findUnique({
+        where: { id: ligne.stockItemId }
+      });
+      if (!stockItem) continue;
+
+      const nouveauStatut =
+        stockItem.allocatedQty - 1 === 0 && stockItem.maintenanceQty === 0
+          ? STATUTS_MATERIEL.DISPONIBLE
+          : stockItem.status === STATUTS_MATERIEL.AFFECTE
+            ? STATUTS_MATERIEL.DISPONIBLE
+            : stockItem.status;
+      exigerTransition(stockItem.status, nouveauStatut);
+
+      await tx.articleStock.update({
+        where: { id: stockItem.id },
+        data: {
+          allocatedQty: { decrement: 1 },
+          availableQty: { increment: 1 },
+          status: nouveauStatut,
+          assignedTo: stockItem.allocatedQty - 1 === 0 ? Prisma.DbNull : undefined
+        }
+      });
+
+      await tx.mouvementStock.create({
+        data: {
+          reference: await nouvelleReferenceMouvement(tx),
+          stockItemId: stockItem.id,
+          itemName: stockItem.name,
+          type: "Annulation Affectation",
+          quantity: 1,
+          performedBy: acteur?.nomUtilisateur || "Service Informatique",
+          recipient: "Magasin Central IT",
+          department: affectation.beneficiaryDepartment,
+          date: new Date(),
+          notes: `Annulation de l'affectation ${affectation.reference} — matériel réintégré au stock disponible.`
+        }
+      });
+
+      const disponibleApres = stockItem.availableQty + 1;
+      alertesAPublier.push(() =>
+        verifierSeuilStock({
+          id: stockItem.id,
+          name: stockItem.name,
+          reference: stockItem.reference,
+          availableQty: disponibleApres,
+          minThreshold: stockItem.minThreshold
+        })
+      );
+    }
+
+    await tx.affectation.update({
+      where: { id: affectation.id },
+      data: { status: "Annulée" }
+    });
+
+    await journaliserDansTx(tx, {
+      action: ACTIONS_AUDIT.ASSIGNMENT_CANCELLED,
+      utilisateurId: acteur?.utilisateurId ?? null,
+      adresseIp: acteur?.adresseIp ?? null,
+      agentUtilisateur: acteur?.agentUtilisateur ?? null,
+      entite: "Affectation",
+      entiteId: affectation.id,
+      details: {
+        reference: affectation.reference,
+        beneficiaire: affectation.beneficiaryName,
+        articles: affectation.items.map((l) => l.assetTag || l.name)
+      },
+      valeursAvant: { statut: "Active" },
+      valeursApres: { statut: "Annulée" }
+    });
+
+    return { reference: affectation.reference, alertesAPublier };
   });
-  if (!affectation) throw introuvable("Affectation introuvable.");
-  if (affectation.status === "Active") {
-    throw requeteInvalide(
-      "Impossible de supprimer une fiche d'affectation active : enregistrez d'abord la restitution du matériel."
-    );
-  }
 
-  await prisma.affectation.delete({ where: { id: affectation.id } });
-  return { message: "Fiche d'affectation supprimée." };
+  for (const publier of resultat.alertesAPublier) await publier();
+
+  return {
+    message: `Affectation ${resultat.reference} annulée : le matériel est revenu au stock disponible. La fiche est conservée dans l'historique.`,
+    data: { reference: resultat.reference, statut: "Annulée" }
+  };
 }
