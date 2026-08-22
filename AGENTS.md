@@ -73,6 +73,14 @@ Le frontend en dépend :
 
 Codes utilisés : 200, 201, 400, 401, 403, 404, 409 (conflit métier), 422 (validation), 429, 500. Les messages d'erreur sont **en français et destinés à l'utilisateur final**.
 
+### Langue des clés — décision du 22 août
+
+**Les clés des réponses API sont en français**, comme le modèle de données : `utilisateurs`, `societes`, `articles`, `mouvements`, `affectations`, `creeLe`, `modifieLe`, `derniereConnexion`.
+
+La traduction vers l'anglais mise en place au chantier 1 dans `lib/serialisation.ts` (`creeLe → createdAt`, `derniereConnexion → lastLogin`) était une cale de compatibilité pour le frontend hérité. Elle est **supprimée**, pas étendue : le frontend est adapté dans le même commit que le renommage.
+
+Règle pour la suite : **aucune traduction de nom de champ à la frontière HTTP.** Le sérialiseur convertit les types (`Decimal → number`, `Date → ISO`) et filtre les champs internes ; il ne renomme rien. Un nouvel endpoint expose les noms du modèle, tels quels.
+
 ## Périmètre supprimé
 
 Les modules **achats** — `BonCommande`, `LigneCommande`, `Budget`, `AppelOffres`, `Offre`, `ia.service.ts` et le client Gemini — ont été **retirés du dépôt**. L'application couvre exclusivement la gestion de parc informatique : équipements, affectations, stock, maintenance, licences.

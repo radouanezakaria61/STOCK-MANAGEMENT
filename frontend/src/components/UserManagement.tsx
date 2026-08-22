@@ -184,8 +184,8 @@ export default function UserManagement({
 
       setIsModalOpen(false);
       await onRefresh();
-    } catch (err: any) {
-      setFormError(err.message || "Une erreur est survenue.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Une erreur est survenue.");
     } finally {
       setIsSaving(false);
     }
@@ -212,7 +212,7 @@ export default function UserManagement({
         onSwitchUser(enrichir(result.data));
       }
       await onRefresh();
-    } catch (err: any) {
+    } catch {
       alert("Erreur réseau");
     }
   };
@@ -236,7 +236,7 @@ export default function UserManagement({
         onSwitchUser(updated[0]);
       }
       await onRefresh();
-    } catch (err: any) {
+    } catch {
       alert("Erreur réseau");
     }
   };

@@ -132,8 +132,8 @@ export default function SocietesManagement({
         "societes"
       );
       await onRefresh();
-    } catch (err: any) {
-      setFormError(err.message || "Une erreur est survenue.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Une erreur est survenue.");
     } finally {
       setIsSaving(false);
     }

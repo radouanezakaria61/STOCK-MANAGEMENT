@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { MaterialAssignment, ITStockItem, AppUser, ReturnCause, EquipmentReturnCondition, TelecomOperator, AssignedResourceType, OperationType, RestitutedDeviceCondition } from "../types";
+import { MaterialAssignment, ITStockItem, AppUser, ReturnCause, EquipmentReturnCondition, TelecomOperator, AssignedResourceType, OperationType, RestitutedDeviceCondition, AssignedItemDetail, MaterialReturnRecord } from "../types";
 import { exportAssignmentToPDF, exportReturnToPDF, exportDistraSimSmartphoneToPDF } from "../utils/pdfGenerator";
 import {
   FileCheck2,
@@ -269,7 +269,45 @@ export default function MaterialAssignmentModule({
       const isSim = formResourceType === "Carte SIM" || formResourceType === "Carte SIM + SmartPhone";
       const isPhone = formResourceType === "SmartPhone" || formResourceType === "Carte SIM + SmartPhone";
 
-      const payloadBody: any = {
+      const payloadBody: {
+        templateType?: string;
+        formCode?: string;
+        beneficiaryName: string;
+        beneficiaryEmail: string;
+        beneficiaryPhone: string;
+        beneficiaryCin: string;
+        beneficiaryJobTitle: string;
+        beneficiaryDepartment: string;
+        beneficiarySite: string;
+        assignedDate: string;
+        authorizedBy: string;
+        dsiTitle: string;
+        items: typeof itemsPayload;
+        notes: string;
+        resourceType?: AssignedResourceType;
+        hasSimCard?: boolean;
+        simOperator?: TelecomOperator;
+        simPhoneNumber?: string;
+        simPuk?: string;
+        simPin?: string;
+        hasSmartphone?: boolean;
+        deviceBrand?: string;
+        deviceImei?: string;
+        deviceModel?: string;
+        deviceConfiguration?: string;
+        operationType?: OperationType;
+        restitutionPreviousDevice?: "OUI" | "NON";
+        restitutedDeviceCondition?: RestitutedDeviceCondition;
+        incidentRemarks?: string;
+        equipmentType?: string;
+        equipmentCpu?: string;
+        equipmentRam?: string;
+        equipmentStorage?: string;
+        equipmentAcquisitionDate?: string;
+        hasKeyboard?: boolean;
+        hasMouse?: boolean;
+        hasUsbAdapter?: boolean;
+      } = {
         templateType: assignmentTemplateType,
         formCode: assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" ? "IT-02" : "IT-01",
         beneficiaryName: formBeneficiaryName,
@@ -1373,7 +1411,7 @@ export default function MaterialAssignmentModule({
                                   </label>
                                   <select
                                     value={currentCondition}
-                                    onChange={(e) => setItemCondition(itemId, e.target.value as any)}
+                                    onChange={(e) => setItemCondition(itemId, e.target.value as AssignedItemDetail["condition"])}
                                     className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
                                   >
                                     <option value="Neuf / Excellent état">Neuf / Excellent état</option>
@@ -1671,7 +1709,7 @@ export default function MaterialAssignmentModule({
                   <label className="block text-[11px] font-bold text-slate-600 mb-1">Action Technique Décidée (DSI) *</label>
                   <select
                     value={actionTaken}
-                    onChange={(e) => setActionTaken(e.target.value as any)}
+                    onChange={(e) => setActionTaken(e.target.value as MaterialReturnRecord["actionTaken"])}
                     className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-bold text-indigo-700"
                   >
                     <option value="Remise en stock disponible">Remise en stock disponible (Prêt pour dotation)</option>

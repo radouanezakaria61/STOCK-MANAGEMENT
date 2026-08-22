@@ -136,6 +136,16 @@ export function gestionnaireErreurs(
     res.status(err.status).json({ error: err.message });
     return;
   }
+  // Corps JSON malformé : body-parser lève `entity.parse.failed`.
+  // C'est une requête fautive (400), pas une panne serveur (500).
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { type?: string }).type === "entity.parse.failed"
+  ) {
+    res.status(400).json({ error: "Corps de requête JSON invalide." });
+    return;
+  }
   console.error("Erreur serveur inattendue :", err);
   res.status(500).json({ error: "Erreur interne du serveur." });
 }

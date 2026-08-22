@@ -70,16 +70,18 @@ interface LigneConstruite {
   accessories: string[];
 }
 
-// Génère la référence métier AFF-DSI-2026-NNN en se basant sur les
-// références existantes. On matche le suffixe numérique quelle que soit
-// l'année ou le préfixe pour éviter les collisions.
+// Génère la référence métier AFF-DSI-AAAA-NNN à partir des références de
+// l'année courante. L'année est dynamique ; la séquence repart à 001 chaque
+// 1er janvier sans risquer de collision avec les années antérieures.
 async function prochaineReference(tx: Tx): Promise<string> {
-  const refs = await tx.affectation.findMany({ select: { reference: true } });
-  const numero = numeroSuivant(
-    refs.map((r) => r.reference),
-    /(\d+)$/
-  );
-  return `AFF-DSI-2026-${pad3(numero)}`;
+  const annee = new Date().getFullYear();
+  const refsAnneeCourante = (
+    await tx.affectation.findMany({ select: { reference: true } })
+  )
+    .map((r) => r.reference)
+    .filter((ref) => ref.startsWith(`AFF-DSI-${annee}-`));
+  const numero = numeroSuivant(refsAnneeCourante, /(\d+)$/);
+  return `AFF-DSI-${annee}-${pad3(numero)}`;
 }
 
 async function trouverArticle(tx: Tx, identifiant: string) {
@@ -207,7 +209,7 @@ export async function creerAffectation(data: EntreeAffectation) {
                 itemName: stockItem.name,
                 type: "Sortie Affectation",
                 quantity: 1,
-                performedBy: authorizedBy || "Zakaria Radouane (DSI)",
+                performedBy: authorizedBy || "Département Systèmes d'Information",
                 recipient: beneficiaryName,
                 department: beneficiaryDepartment,
                 date: dateAffectation,
@@ -261,10 +263,10 @@ export async function creerAffectation(data: EntreeAffectation) {
         simPin: simPin || "",
         hasSmartphone:
           hasSmartphone === true || Boolean(resourceType?.includes("SmartPhone")),
-        deviceBrand: deviceBrand || lignesConstruites[0]?.brand || "HP",
+        deviceBrand: deviceBrand || lignesConstruites[0]?.brand || "",
         deviceImei: deviceImei || lignesConstruites[0]?.serialNumber || "",
-        deviceModel: deviceModel || lignesConstruites[0]?.model || "15-AY002NK",
-        deviceConfiguration: deviceConfiguration || "4 GB | 500 GB",
+        deviceModel: deviceModel || lignesConstruites[0]?.model || "",
+        deviceConfiguration: deviceConfiguration || "",
         operationType: operationType || "AFFECTATION",
         restitutionPreviousDevice: restitutionPreviousDevice || "NON",
         restitutedDeviceCondition: restitutedDeviceCondition || "Non applicable",
@@ -354,7 +356,7 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
         bitlockerUnlocked: bitlockerUnlocked === true,
         technicalDiagnosis: technicalDiagnosis || "Matériel inspecté et vérifié conforme.",
         actionTaken: actionTaken || "Remise en stock disponible",
-        inspectedBy: inspectedBy || "Zakaria Radouane (DSI)",
+        inspectedBy: inspectedBy || "Service Informatique",
         notes: notes || ""
       }
     });
@@ -395,7 +397,7 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
           itemName: stockItem.name,
           type: actionTaken === "Mise au rebut" ? "Mise au Rebut" : "Retour Stock",
           quantity: 1,
-          performedBy: inspectedBy || "Zakaria Radouane (DSI)",
+          performedBy: inspectedBy || "Service Informatique",
           recipient: "Magasin Central IT",
           department: affectation.beneficiaryDepartment,
           date: dateRetour,
@@ -422,15 +424,24 @@ export async function restituerAffectation(idOuReference: string, data: EntreeRe
 }
 
 // ── Suppression ───────────────────────────────────────────────────────
-// Suppression physique assumée : la fiche disparaît avec ses lignes et son
-// éventuel retour (cascades), mais les mouvements de stock associés sont
-// conservés (FK vers ArticleStock uniquement).
+// Suppression physique assumée pour les fiches déjà restituées : la fiche
+// disparaît avec ses lignes et son éventuel retour (cascades), mais les
+// mouvements de stock associés sont conservés (FK vers ArticleStock).
+// Une fiche Active est refusée : la supprimer sans restitution laisserait
+// le stock figé (quantités décomptées) et violerait l'historique en
+// écriture seule. La refonte du chantier 6 remplacera tout cela par un
+// soft delete.
 
 export async function supprimerAffectation(idOuReference: string) {
   const affectation = await prisma.affectation.findFirst({
     where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
   });
   if (!affectation) throw introuvable("Affectation introuvable.");
+  if (affectation.status === "Active") {
+    throw requeteInvalide(
+      "Impossible de supprimer une fiche d'affectation active : enregistrez d'abord la restitution du matériel."
+    );
+  }
 
   await prisma.affectation.delete({ where: { id: affectation.id } });
   return { message: "Fiche d'affectation supprimée." };

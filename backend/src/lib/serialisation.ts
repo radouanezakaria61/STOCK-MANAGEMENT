@@ -7,8 +7,11 @@ import { Prisma } from "@prisma/client";
 //    « date seule » du contrat d'API, ISO complet sinon.
 //  - `derniereConnexion` null → sentinelle « Non connecté » (contrat conservé).
 //
-// Les clés de réponse restent celles que le frontend connaît déjà :
-// creeLe → createdAt, derniereConnexion → lastLogin.
+// Décision du 22 août (AGENTS.md « Langue des clés ») : les clés de réponse
+// restent EXACTEMENT celles du modèle Prisma — creeLe, derniereConnexion…
+// Aucun renommage à la frontière HTTP ; la cale de traduction vers
+// l'anglais (createdAt, lastLogin) a été supprimée, frontend adapté dans
+// le même commit.
 
 const CHAMPS_DATE_SEULE = new Set([
   "purchaseDate",
@@ -17,11 +20,6 @@ const CHAMPS_DATE_SEULE = new Set([
   "assignedDate",
   "returnDate"
 ]);
-
-const RENOMMAGE: Record<string, string> = {
-  creeLe: "createdAt",
-  derniereConnexion: "lastLogin"
-};
 
 // Champs internes jamais exposés par le contrat d'API.
 const CHAMPS_SUPPRIMES = new Set(["supprimeLe", "modifieLe"]);
@@ -59,7 +57,7 @@ function transformer(valeur: unknown, cle?: string): unknown {
     const sortie: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(source)) {
       if (CHAMPS_SUPPRIMES.has(k)) continue;
-      sortie[RENOMMAGE[k] ?? k] = transformer(v, k);
+      sortie[k] = transformer(v, k);
     }
     return sortie;
   }

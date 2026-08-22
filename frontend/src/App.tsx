@@ -84,7 +84,9 @@ export default function App() {
       const response = await fetch("/api/data");
       if (response.ok) {
         const payload = await response.json();
-        const { societes, users, stockItems, stockMovements, assignments } = payload.data;
+        // Clés API en français (AGENTS.md « Langue des clés ») ;
+        // les noms internes du frontend sont inchangés.
+        const { societes, utilisateurs: users, articles: stockItems, mouvements: stockMovements, affectations: assignments } = payload.data;
         setSocietes(societes);
         setUsers(users);
         setCurrentUser((prev) => prev ?? users[0] ?? null);

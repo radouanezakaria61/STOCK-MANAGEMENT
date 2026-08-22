@@ -1,5 +1,5 @@
 import jsPDF from "jspdf";
-import { MaterialAssignment } from "../types";
+import { MaterialAssignment, AssignedItemDetail } from "../types";
 import { getDistraLogoDataUri } from "./distraLogo";
 
 /**
@@ -152,17 +152,17 @@ export function exportDistraITEquipmentToPDF(assignment: MaterialAssignment) {
   const headerRow2H = 6;
   const fullHeaderH = headerRow1H + headerRow2H; // 12mm
 
-  const itemsList = (assignment.items && assignment.items.length > 0)
+  const itemsList: AssignedItemDetail[] = (assignment.items && assignment.items.length > 0)
     ? assignment.items
     : [{
         stockItemId: "STK-1",
         name: assignment.equipmentType || "Ordinateur / PC",
-        category: "Ordinateurs Portables" as any,
+        category: "Laptops & Portables",
         brand: assignment.deviceBrand || "HP",
         model: assignment.deviceModel || "15-AY002NK",
         serialNumber: assignment.deviceImei || "CZC50324W0",
         assetTag: "IT-AST-1001",
-        condition: "Neuf / Excellent état" as any,
+        condition: "Neuf / Excellent état",
         accessories: [],
         specs: {
           cpu: assignment.equipmentCpu || "Intel i7",

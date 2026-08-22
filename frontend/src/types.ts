@@ -35,8 +35,8 @@ export interface AppUser {
   societeId?: string | null;
   societe?: SocieteRef | null;
   avatarUrl?: string;
-  createdAt: string;
-  lastLogin?: string;
+  creeLe: string;
+  derniereConnexion?: string;
 }
 
 export type StockCategory = 

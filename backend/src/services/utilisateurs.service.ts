@@ -6,6 +6,24 @@ import { numeroSuivant } from "../lib/ids.js";
 // Le RBAC serveur fin remplace ce simple contrôle au chantier 2.
 const ROLES_AUTORISES = ["ADMIN", "AUDITOR", "UTILISATEUR"] as const;
 
+const STATUTS_AUTORISES = ["Actif", "Inactif"] as const;
+
+function validerRole(role: string): void {
+  if (!ROLES_AUTORISES.includes(role as (typeof ROLES_AUTORISES)[number])) {
+    throw requeteInvalide(
+      `Rôle non reconnu : « ${role} ». Rôles acceptés : ${ROLES_AUTORISES.join(", ")}.`
+    );
+  }
+}
+
+function validerStatut(statut: string): void {
+  if (!STATUTS_AUTORISES.includes(statut as (typeof STATUTS_AUTORISES)[number])) {
+    throw requeteInvalide(
+      `Statut non reconnu : « ${statut} ». Statuts acceptés : ${STATUTS_AUTORISES.join(", ")}.`
+    );
+  }
+}
+
 export interface EntreeUtilisateur {
   name?: string;
   email?: string;
@@ -46,9 +64,8 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
   if (!name || !email || !department || !role) {
     throw requeteInvalide("Nom, email, département et rôle sont obligatoires.");
   }
-  const roleFinal = ROLES_AUTORISES.includes(role as (typeof ROLES_AUTORISES)[number])
-    ? role
-    : "UTILISATEUR";
+  validerRole(role);
+  if (status !== undefined) validerStatut(status);
 
   // Unicité d'email (contrôle insensible à la casse, comme l'existant)
   const existant = await prisma.utilisateur.findFirst({
@@ -73,7 +90,7 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
       phone: phone || "",
       department,
       jobTitle: jobTitle || "Collaborateur",
-      role: roleFinal,
+      role,
       status: status || "Actif",
       societeId: societeIdFinale,
       avatarUrl: ""
@@ -88,6 +105,8 @@ export async function modifierUtilisateur(idOuReference: string, data: EntreeUti
   if (!utilisateur) throw introuvable("Utilisateur introuvable.");
 
   const donnees: Record<string, unknown> = {};
+  if (data.role !== undefined) validerRole(data.role);
+  if (data.status !== undefined) validerStatut(data.status);
   if (data.name !== undefined) donnees["name"] = data.name;
   if (data.email !== undefined) donnees["email"] = data.email;
   if (data.phone !== undefined) donnees["phone"] = data.phone;
@@ -105,6 +124,7 @@ export async function modifierUtilisateur(idOuReference: string, data: EntreeUti
 export async function changerStatutUtilisateur(idOuReference: string, statut: string) {
   const utilisateur = await trouverUtilisateur(idOuReference);
   if (!utilisateur) throw introuvable("Utilisateur introuvable.");
+  validerStatut(statut);
 
   // Empêche la désactivation du dernier administrateur actif
   if (utilisateur.role === "ADMIN" && statut !== "Actif") {

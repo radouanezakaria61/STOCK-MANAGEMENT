@@ -27,17 +27,20 @@ async function main() {
   verif("enveloppe {status:'ok'}", enveloppe.status === "ok");
   const data = enveloppe.data;
 
-  const { societes, users, stockItems, stockMovements: movements, assignments } = data as Record<string, any[]>;
+  // Clés API en français (AGENTS.md « Langue des clés », décision du 22 août).
+  const { societes, utilisateurs: users, articles: stockItems, mouvements: movements, affectations: assignments } = data as Record<string, any[]>;
 
   // ── Compteurs (seed parc IT) ───────────────────────────────────────
   const compteurs = [societes?.length, users?.length, stockItems?.length, movements?.length, assignments?.length].join(",");
   verif("compteurs 2,5,7,4,3", compteurs === "2,5,7,4,3", compteurs);
 
-  // ── Clés retirées absentes ─────────────────────────────────────────
+  // ── Clés retirées absentes / clés anglaises supprimées ─────────────
   verif("clé vendors supprimée", !("vendors" in data));
   verif("clé purchaseOrders supprimée", !("purchaseOrders" in data));
   verif("clé budgets supprimée", !("budgets" in data));
   verif("clé rfqComparisonPools supprimée", !("rfqComparisonPools" in data));
+  verif("clé users (anglaise) supprimée", !("users" in data));
+  verif("clé stockItems (anglaise) supprimée", !("stockItems" in data));
 
   // ── Ordre d'affichage (références) ─────────────────────────────────
   verif("ordre societes soc-1→soc-2", societes.map((s: any) => s.reference).join() === ["soc-1","soc-2"].join(), societes.map((s: any) => s.reference).join());
@@ -50,6 +53,9 @@ async function main() {
   const toutesEntites = [...societes, ...users, ...stockItems, ...movements, ...assignments];
   verif("ids = uuid sur toutes les entités", toutesEntites.every((e) => estUuid(e.id)), toutesEntites.filter((e) => !estUuid(e.id)).map((e) => e.reference ?? "?").slice(0, 5).join());
 
+  // ── Cale de traduction anglaise supprimée (décision du 22 août) ────
+  verif("creeLe présent, createdAt absent", toutesEntites.every((e) => typeof e.creeLe === "string" && e.creeLe.length > 0 && !("createdAt" in e)));
+
   // ── Décimaux → nombres ─────────────────────────────────────────────
   verif("prix unitaires numériques (stock)", stockItems.every((s: any) => typeof s.unitPriceMAD === "number" && typeof s.totalValueMAD === "number"));
 
@@ -58,8 +64,7 @@ async function main() {
   verif("warrantyExpiry yyyy-MM-dd ou null", stockItems.every((s: any) => s.warrantyExpiry === null || estDateSeule(s.warrantyExpiry)));
   verif("mouvement.date yyyy-MM-dd", movements.every((m: any) => estDateSeule(m.date)));
   verif("assignedDate yyyy-MM-dd", assignments.every((a: any) => estDateSeule(a.assignedDate)));
-  verif("createdAt présent (ISO)", toutesEntites.every((e) => typeof e.createdAt === "string" && e.createdAt.length > 0));
-  verif("lastLogin 'YYYY-MM-DD HH:mm'", users.every((u: any) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(u.lastLogin)), JSON.stringify(users.map((u: any) => u.lastLogin)));
+  verif("derniereConnexion 'YYYY-MM-DD HH:mm'", users.every((u: any) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(u.derniereConnexion)), JSON.stringify(users.map((u: any) => u.derniereConnexion)));
 
   // ── Parité métier (échantillon) ────────────────────────────────────
   const soc1 = societes.find((s: any) => s.reference === "soc-1");
@@ -82,7 +87,7 @@ async function main() {
     usr1.role === "ADMIN" && usr1.societeId === soc1.id &&
       !("spendingLimitMAD" in usr1) && !("permissions" in usr1) && usr1.societe?.codeCourt === "DSA"
   );
-  verif("usr-1.lastLogin 2026-08-18 13:40", usr1.lastLogin === "2026-08-18 13:40");
+  verif("usr-1.derniereConnexion 2026-08-18 13:40", usr1.derniereConnexion === "2026-08-18 13:40");
 
   verif(
     "aucun rôle achats résiduel",

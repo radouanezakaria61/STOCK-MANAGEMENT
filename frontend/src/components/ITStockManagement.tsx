@@ -795,7 +795,7 @@ export default function ITStockManagement({
                 <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Type de Mouvement</label>
                 <select
                   value={adjustForm.type}
-                  onChange={(e) => setAdjustForm({ ...adjustForm, type: e.target.value as any })}
+                  onChange={(e) => setAdjustForm({ ...adjustForm, type: e.target.value as typeof adjustForm.type })}
                   className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white font-bold"
                 >
                   <option value="Entrée Achat">📥 Entrée Achat (Réception fournisseur supplémentaire)</option>

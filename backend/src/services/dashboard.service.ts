@@ -6,7 +6,7 @@ import { prisma } from "../lib/prisma.js";
 // rfqComparisonPools n'existent plus. Depuis le plan v1.2 (chantier 2a),
 // la clé vendors est remplacée par societes.
 export async function obtenirDonneesGlobales() {
-  const [societes, users, stockItems, stockMovements, assignments] = await Promise.all([
+  const [societes, utilisateurs, articles, mouvements, affectations] = await Promise.all([
     prisma.societe.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.utilisateur.findMany({
       orderBy: { creeLe: "desc" },
@@ -20,11 +20,13 @@ export async function obtenirDonneesGlobales() {
     })
   ]);
 
+  // Clés en français comme le modèle (AGENTS.md « Langue des clés ») :
+  // societes, utilisateurs, articles, mouvements, affectations.
   return {
     societes,
-    users,
-    stockItems,
-    stockMovements,
-    assignments
+    utilisateurs,
+    articles,
+    mouvements,
+    affectations
   };
 }

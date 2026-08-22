@@ -7,15 +7,7 @@ dotenv.config();
 // automatiquement les enregistrements supprimés (soft delete).
 // Les journaux (MouvementStock, RetourAffectation, lignes…) sont hors liste :
 // ils ne se suppriment jamais (AGENTS.md règle 3).
-const MODELES_SOFT_DELETE = new Set([
-  "Fournisseur",
-  "BonCommande",
-  "Budget",
-  "AppelOffres",
-  "Offre",
-  "Utilisateur",
-  "ArticleStock"
-]);
+const MODELES_SOFT_DELETE = new Set(["Utilisateur", "ArticleStock", "Societe"]);
 
 const OPERATIONS_FILTRABLES = new Set([
   "findMany",
@@ -25,6 +17,13 @@ const OPERATIONS_FILTRABLES = new Set([
   "updateMany",
   "deleteMany"
 ]);
+
+// findUnique / findUniqueOrThrow n'acceptent qu'un where sur champs uniques :
+// impossible d'y injecter `supprimeLe: null`. On filtre donc après lecture :
+// une ligne archivée est renvoyée comme introuvable. Sans cela, le futur
+// login (`findUnique({ where: { email } })`) laisserait passer un compte
+// révoqué — prérequis documenté du chantier 2b.
+const OPERATIONS_POST_LECTURE = new Set(["findUnique", "findUniqueOrThrow"]);
 
 const client = new PrismaClient();
 
@@ -48,6 +47,17 @@ export const prisma = client.$extends({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return query(argumentsFiltres as any); // signature interne Prisma (union large)
         }
+
+        if (
+          model &&
+          MODELES_SOFT_DELETE.has(model) &&
+          OPERATIONS_POST_LECTURE.has(operation)
+        ) {
+          const resultat = (await query(args)) as Record<string, unknown> | null;
+          if (resultat !== null && resultat["supprimeLe"] != null) return null;
+          return resultat;
+        }
+
         return query(args);
       }
     }
