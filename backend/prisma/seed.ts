@@ -12,9 +12,85 @@
  */
 import "dotenv/config";
 import { randomUUID } from "crypto";
+import { hash as hacherArgon } from "@node-rs/argon2";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+
+// ── RBAC : rôles, permissions et matrice (architecture §5.2) ──────────
+// Les codes sont des valeurs d'enum (anglais) ; le français passe par `nom`
+// et par les libellés d'interface. Cette matrice est la SEULE source :
+// aucune liste parallèle dans le code applicatif.
+const ROLES = [
+  { code: "SUPER_ADMIN", nom: "Super administrateur" },
+  { code: "IT_MANAGER", nom: "Responsable IT" },
+  { code: "IT_TECHNICIAN", nom: "Technicien IT" },
+  { code: "STOCK_MANAGER", nom: "Gestionnaire de stock" },
+  { code: "AUDITOR", nom: "Auditeur" },
+  { code: "EMPLOYEE", nom: "Employé (lecture)" }
+];
+
+const PERMISSIONS = [
+  { code: "utilisateurs.gerer", description: "Créer, modifier, désactiver les comptes utilisateur" },
+  { code: "societes.gerer", description: "Gérer le référentiel des sociétés" },
+  { code: "stock.ecrire", description: "Articles de stock et mouvements (entrée, sortie, ajustement)" },
+  { code: "affectations.ecrire", description: "Affectations, restitutions et retraits" },
+  { code: "audit.consulter", description: "Consulter le journal d'audit" },
+  { code: "parametres.gerer", description: "Paramètres généraux de l'application" }
+] as const;
+
+const MATRICE_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
+  SUPER_ADMIN: [
+    "utilisateurs.gerer",
+    "societes.gerer",
+    "stock.ecrire",
+    "affectations.ecrire",
+    "audit.consulter",
+    "parametres.gerer"
+  ],
+  IT_MANAGER: ["stock.ecrire", "affectations.ecrire", "audit.consulter"],
+  IT_TECHNICIAN: ["stock.ecrire", "affectations.ecrire"],
+  STOCK_MANAGER: ["stock.ecrire", "affectations.ecrire", "societes.gerer"],
+  AUDITOR: ["audit.consulter"],
+  EMPLOYEE: []
+};
+
+// Comptes de démonstration réservés au développement (voir main()) :
+// même mot de passe temporaire pour tous, affiché une fois à la fin du seed.
+const MOT_DE_PASSE_DEMO = "Distra-Demo-2026";
+
+async function semerRolesEtPermissions(): Promise<Map<string, string>> {
+  const idRole = new Map<string, string>();
+  for (const r of ROLES) {
+    const role = await prisma.role.upsert({
+      where: { code: r.code },
+      update: { nom: r.nom },
+      create: { id: randomUUID(), code: r.code, nom: r.nom }
+    });
+    idRole.set(role.code, role.id);
+  }
+  const idPermission = new Map<string, string>();
+  for (const p of PERMISSIONS) {
+    const permission = await prisma.permission.upsert({
+      where: { code: p.code },
+      update: { description: p.description },
+      create: { id: randomUUID(), code: p.code, description: p.description }
+    });
+    idPermission.set(permission.code, permission.id);
+  }
+  await prisma.rolePermission.deleteMany();
+  for (const [codeRole, codesPermissions] of Object.entries(MATRICE_ROLE_PERMISSIONS)) {
+    for (const codePermission of codesPermissions) {
+      await prisma.rolePermission.create({
+        data: {
+          roleId: idRole.get(codeRole)!,
+          permissionId: idPermission.get(codePermission)!
+        }
+      });
+    }
+  }
+  return idRole;
+}
 
 // Horloge déterministe : chaque create reçoit un instant distinct,
 // un jour après l'autre à partir du 1er janvier 2026.
@@ -28,13 +104,20 @@ function dateSeule(s: string): Date {
 
 async function main() {
   // Nettoyage (ordre respectant les clés étrangères)
+  await prisma.journalAudit.deleteMany();
+  await prisma.session.deleteMany();
   await prisma.retourAffectation.deleteMany();
   await prisma.ligneAffectation.deleteMany();
   await prisma.affectation.deleteMany();
   await prisma.mouvementStock.deleteMany();
   await prisma.articleStock.deleteMany();
   await prisma.utilisateur.deleteMany();
+  await prisma.rolePermission.deleteMany();
+  await prisma.permission.deleteMany();
+  await prisma.role.deleteMany();
   await prisma.societe.deleteMany();
+
+  const idRole = await semerRolesEtPermissions();
 
   const idArticle = new Map<string, string>();
   const idSociete = new Map<string, string>();
@@ -71,79 +154,132 @@ async function main() {
     idSociete.set(cree.reference, cree.id);
   }
 
-  // ── Utilisateurs (insertion inversée : usr-5 → usr-1) ────────────────
-  const utilisateurs = [
-    {
-      reference: "usr-5",
-      name: "Mehdi Alami",
-      email: "mehdi.alami@entreprise.ma",
-      phone: "+212 6 65 67 89 01",
-      department: "Chaîne Logistique & Approvisionnements",
-      jobTitle: "Responsable Approvisionnements & Flotte",
-      role: "UTILISATEUR",
-      status: "Inactif",
-      societeRef: "soc-2",
-      avatarUrl: "",
-      derniereConnexion: new Date("2026-07-25T14:20:00Z")
-    },
-    {
-      reference: "usr-4",
-      name: "Sarah Benali",
-      email: "sarah.benali@entreprise.ma",
-      phone: "+212 6 64 56 78 90",
-      department: "Direction Générale & Finance",
-      jobTitle: "Contrôleur Financier & Auditeur Interne",
-      role: "AUDITOR",
-      status: "Actif",
-      societeRef: "soc-1",
-      avatarUrl: "",
-      derniereConnexion: new Date("2026-08-18T09:05:00Z")
-    },
-    {
-      reference: "usr-3",
-      name: "Karim Berrada",
-      email: "karim.berrada@entreprise.ma",
-      phone: "+212 6 63 45 67 89",
-      department: "Ventes & Marketing",
-      jobTitle: "Responsable Commercial",
-      role: "UTILISATEUR",
-      status: "Actif",
-      societeRef: "soc-2",
-      avatarUrl: "",
-      derniereConnexion: new Date("2026-08-17T16:30:00Z")
-    },
-    {
-      reference: "usr-2",
-      name: "Maya Lin",
-      email: "maya.lin@entreprise.ma",
-      phone: "+212 6 62 34 56 78",
-      department: "Ressources Humaines & Moyens Généraux",
-      jobTitle: "Directrice des Moyens Généraux",
-      role: "UTILISATEUR",
-      status: "Actif",
-      societeRef: "soc-1",
-      avatarUrl: "",
-      derniereConnexion: new Date("2026-08-18T11:15:00Z")
-    },
-    {
-      reference: "usr-1",
-      name: "Zakaria Radouane",
-      email: "zakariaradouane61@gmail.com",
-      phone: "+212 6 61 23 45 67",
-      department: "Technologies de l'Information",
-      jobTitle: "Directeur des Systèmes d'Information (DSI)",
-      role: "ADMIN",
-      status: "Actif",
-      societeRef: "soc-1",
-      avatarUrl: "",
-      derniereConnexion: new Date("2026-08-18T13:40:00Z")
+  // ── Utilisateurs ──────────────────────────────────────────────────────
+  // En production : un seul compte Super administrateur, mot de passe issu
+  // de ADMIN_INITIAL_PASSWORD, à changer à la première connexion.
+  // Ailleurs : comptes de démonstration (désactivables via AUTORISER_SEED_DEMO=false).
+  const modeProduction = process.env.NODE_ENV === "production";
+  const demoAutorise =
+    !modeProduction && process.env.AUTORISER_SEED_DEMO !== "false";
+
+  if (modeProduction) {
+    const motDePasseAdmin = process.env.ADMIN_INITIAL_PASSWORD;
+    if (!motDePasseAdmin || motDePasseAdmin.length < 12) {
+      throw new Error(
+        "Seed production refusé : définissez ADMIN_INITIAL_PASSWORD (12 caractères minimum) dans l'environnement."
+      );
     }
-  ];
-  for (const u of utilisateurs) {
-    const { societeRef, ...donnees } = u;
     await prisma.utilisateur.create({
-      data: { ...donnees, id: randomUUID(), societeId: idSociete.get(societeRef)!, creeLe: horodatage() }
+      data: {
+        id: randomUUID(),
+        reference: "usr-1",
+        username: "admin",
+        name: "Administrateur",
+        email: "admin@distra.local",
+        phone: "",
+        department: "Technologies de l'Information",
+        jobTitle: "Administrateur système",
+        motDePasseHash: await hacherArgon(motDePasseAdmin),
+        doitChangerMdp: true,
+        roleId: idRole.get("SUPER_ADMIN")!,
+        status: "Actif",
+        avatarUrl: "",
+        creeLe: horodatage()
+      }
     });
+  } else if (demoAutorise) {
+    const utilisateurs = [
+      {
+        reference: "usr-5",
+        username: "mehdi.alami",
+        name: "Mehdi Alami",
+        email: "mehdi.alami@entreprise.ma",
+        phone: "+212 6 65 67 89 01",
+        department: "Chaîne Logistique & Approvisionnements",
+        jobTitle: "Responsable Approvisionnements & Flotte",
+        codeRole: "EMPLOYEE",
+        status: "Inactif",
+        societeRef: "soc-2",
+        avatarUrl: "",
+        derniereConnexion: new Date("2026-07-25T14:20:00Z")
+      },
+      {
+        reference: "usr-4",
+        username: "sarah.benali",
+        name: "Sarah Benali",
+        email: "sarah.benali@entreprise.ma",
+        phone: "+212 6 64 56 78 90",
+        department: "Direction Générale & Finance",
+        jobTitle: "Contrôleur Financier & Auditeur Interne",
+        codeRole: "AUDITOR",
+        status: "Actif",
+        societeRef: "soc-1",
+        avatarUrl: "",
+        derniereConnexion: new Date("2026-08-18T09:05:00Z")
+      },
+      {
+        reference: "usr-3",
+        username: "karim.berrada",
+        name: "Karim Berrada",
+        email: "karim.berrada@entreprise.ma",
+        phone: "+212 6 63 45 67 89",
+        department: "Ventes & Marketing",
+        jobTitle: "Responsable Commercial",
+        codeRole: "EMPLOYEE",
+        status: "Actif",
+        societeRef: "soc-2",
+        avatarUrl: "",
+        derniereConnexion: new Date("2026-08-17T16:30:00Z")
+      },
+      {
+        reference: "usr-2",
+        username: "maya.lin",
+        name: "Maya Lin",
+        email: "maya.lin@entreprise.ma",
+        phone: "+212 6 62 34 56 78",
+        department: "Ressources Humaines & Moyens Généraux",
+        jobTitle: "Directrice des Moyens Généraux",
+        codeRole: "EMPLOYEE",
+        status: "Actif",
+        societeRef: "soc-1",
+        avatarUrl: "",
+        derniereConnexion: new Date("2026-08-18T11:15:00Z")
+      },
+      {
+        reference: "usr-1",
+        username: "zakaria.radouane",
+        name: "Zakaria Radouane",
+        email: "zakariaradouane61@gmail.com",
+        phone: "+212 6 61 23 45 67",
+        department: "Technologies de l'Information",
+        jobTitle: "Directeur des Systèmes d'Information (DSI)",
+        codeRole: "SUPER_ADMIN",
+        status: "Actif",
+        societeRef: "soc-1",
+        avatarUrl: "",
+        derniereConnexion: new Date("2026-08-18T13:40:00Z")
+      }
+    ];
+    // Un seul calcul Argon2 pour tous les comptes démo (même mot de passe).
+    const hacheDemo = await hacherArgon(MOT_DE_PASSE_DEMO);
+    for (const u of utilisateurs) {
+      const { societeRef, codeRole, ...donnees } = u;
+      await prisma.utilisateur.create({
+        data: {
+          ...donnees,
+          id: randomUUID(),
+          motDePasseHash: hacheDemo,
+          doitChangerMdp: false,
+          roleId: idRole.get(codeRole)!,
+          societeId: idSociete.get(societeRef)!,
+          creeLe: horodatage()
+        }
+      });
+    }
+    console.log(`Comptes de démonstration créés — mot de passe commun : ${MOT_DE_PASSE_DEMO}`);
+    console.log("Ce message n'apparaît qu'en développement (NODE_ENV != production).");
+  } else {
+    console.log("AUTORISER_SEED_DEMO=false : aucun compte utilisateur créé.");
   }
 
   // ── Articles en stock (insertion inversée : STK-007 → STK-001) ───────
@@ -534,6 +670,8 @@ async function main() {
   const counts = {
     societes: await prisma.societe.count(),
     utilisateurs: await prisma.utilisateur.count(),
+    roles: await prisma.role.count(),
+    permissions: await prisma.permission.count(),
     articlesStock: await prisma.articleStock.count(),
     mouvements: await prisma.mouvementStock.count(),
     affectations: await prisma.affectation.count(),

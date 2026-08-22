@@ -29,6 +29,9 @@ import {
   restituerAffectation,
   supprimerAffectation
 } from "../services/affectations.service.js";
+import { ZodError } from "zod";
+import { routerAuth } from "./auth.routes.js";
+import { chargerSession, exigerAuth, exigerPermission, verifierOrigine } from "../middleware/auth.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -41,6 +44,18 @@ const h =
 
 export const routerApi = Router();
 
+// Authentification : montée en premier, le login reste public. Les autres
+// routes d'auth gèrent elles-mêmes leur exigence de session.
+routerApi.use("/auth", routerAuth);
+
+// Tout le reste exige une session valide (chantier 2b) : plus aucun
+// endpoint anonyme.
+routerApi.use(chargerSession);
+routerApi.use(exigerAuth);
+
+// Anti-CSRF léger : sur mutation, un en-tête Origin doit être autorisé.
+routerApi.use(verifierOrigine);
+
 routerApi.get("/data", h(async (_req, res) => {
   const data = await obtenirDonneesGlobales();
   res.json({ status: "ok", data });
@@ -50,15 +65,15 @@ routerApi.get("/data", h(async (_req, res) => {
 routerApi.get("/societes", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerSocietes() });
 }));
-routerApi.post("/societes", h(async (req, res) => {
+routerApi.post("/societes", exigerPermission("societes.gerer"), h(async (req, res) => {
   const r = await creerSociete(req.body);
   res.status(201).json(r);
 }));
-routerApi.put("/societes/:id", h(async (req, res) => {
+routerApi.put("/societes/:id", exigerPermission("societes.gerer"), h(async (req, res) => {
   const r = await modifierSociete(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/societes/:id/statut", h(async (req, res) => {
+routerApi.post("/societes/:id/statut", exigerPermission("societes.gerer"), h(async (req, res) => {
   const r = await changerActivationSociete(req.params["id"]!, req.body["actif"] === true);
   res.json(r);
 }));
@@ -66,19 +81,19 @@ routerApi.post("/societes/:id/statut", h(async (req, res) => {
 routerApi.get("/users", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerUtilisateurs() });
 }));
-routerApi.post("/users", h(async (req, res) => {
+routerApi.post("/users", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
   const r = await creerUtilisateur(req.body);
   res.status(201).json(r);
 }));
-routerApi.put("/users/:id", h(async (req, res) => {
+routerApi.put("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
   const r = await modifierUtilisateur(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/users/:id/status", h(async (req, res) => {
+routerApi.post("/users/:id/status", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
   const r = await changerStatutUtilisateur(req.params["id"]!, req.body["status"]);
   res.json(r);
 }));
-routerApi.delete("/users/:id", h(async (req, res) => {
+routerApi.delete("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
   res.json(await supprimerUtilisateur(req.params["id"]!));
 }));
 
@@ -93,34 +108,34 @@ routerApi.get("/stock/search", h(async (req, res) => {
   });
   res.json({ status: "ok", data });
 }));
-routerApi.post("/stock", h(async (req, res) => {
+routerApi.post("/stock", exigerPermission("stock.ecrire"), h(async (req, res) => {
   const r = await creerArticle(req.body);
   res.status(201).json(r);
 }));
-routerApi.put("/stock/:id", h(async (req, res) => {
+routerApi.put("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
   const r = await modifierArticle(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.post("/stock/:id/movement", h(async (req, res) => {
+routerApi.post("/stock/:id/movement", exigerPermission("stock.ecrire"), h(async (req, res) => {
   const r = await enregistrerMouvement(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.delete("/stock/:id", h(async (req, res) => {
+routerApi.delete("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
   res.json(await supprimerArticle(req.params["id"]!));
 }));
 
 routerApi.get("/assignments", h(async (_req, res) => {
   res.json({ status: "ok", data: await listerAffectations() });
 }));
-routerApi.post("/assignments", h(async (req, res) => {
+routerApi.post("/assignments", exigerPermission("affectations.ecrire"), h(async (req, res) => {
   const r = await creerAffectation(req.body);
   res.status(201).json(r);
 }));
-routerApi.post("/assignments/:id/return", h(async (req, res) => {
+routerApi.post("/assignments/:id/return", exigerPermission("affectations.ecrire"), h(async (req, res) => {
   const r = await restituerAffectation(req.params["id"]!, req.body);
   res.json(r);
 }));
-routerApi.delete("/assignments/:id", h(async (req, res) => {
+routerApi.delete("/assignments/:id", exigerPermission("affectations.ecrire"), h(async (req, res) => {
   res.json(await supprimerAffectation(req.params["id"]!));
 }));
 
@@ -144,6 +159,16 @@ export function gestionnaireErreurs(
     (err as { type?: string }).type === "entity.parse.failed"
   ) {
     res.status(400).json({ error: "Corps de requête JSON invalide." });
+    return;
+  }
+  // Échec de validation Zod (AGENTS.md règle 8) → 422 avec le premier
+  // problème signalé, message en français.
+  if (err instanceof ZodError) {
+    const premier = err.issues[0];
+    const chemin = premier && premier.path.length > 0 ? premier.path.join(".") : "";
+    res.status(422).json({
+      error: chemin ? `Champ « ${chemin} » : ${premier!.message}` : premier?.message ?? "Données invalides."
+    });
     return;
   }
   console.error("Erreur serveur inattendue :", err);

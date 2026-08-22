@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "./types";
+import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment, ProfilUtilisateur } from "./types";
 import DashboardOverview from "./components/DashboardOverview";
 import SocietesManagement from "./components/SocietesManagement";
 import UserManagement from "./components/UserManagement";
 import ITStockManagement from "./components/ITStockManagement";
 import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
+import LoginPage from "./components/LoginPage";
+import ChangePasswordModal from "./components/ChangePasswordModal";
 import {
   LayoutDashboard,
   RefreshCw,
@@ -14,23 +16,49 @@ import {
   AlertCircle,
   Info,
   Shield,
-  ChevronDown,
   CheckCircle2,
   Boxes,
   FileCheck2,
   Calendar,
-  Building2
+  Building2,
+  LogOut
 } from "lucide-react";
+
+// Adapte le profil d'authentification (/api/auth/me) au format AppUser
+// consommé par les modules existants.
+function versAppUser(p: ProfilUtilisateur): AppUser {
+  return {
+    id: p.id,
+    reference: p.reference,
+    username: p.username,
+    name: p.name,
+    email: p.email,
+    phone: "",
+    department: p.department,
+    jobTitle: p.jobTitle,
+    role: p.role,
+    status: "Actif",
+    societeId: p.societe?.id ?? null,
+    societe: null,
+    avatarUrl: p.avatarUrl,
+    creeLe: "",
+    derniereConnexion: p.derniereConnexion ?? undefined
+  };
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
 
+  // Authentification réelle (chantier 2b) : la session vit dans un cookie
+  // HttpOnly ; le frontend ne fait que refléter ce que dit le serveur.
+  const [authVerifiee, setAuthVerifiee] = useState(false);
+  const [profil, setProfil] = useState<ProfilUtilisateur | null>(null);
+  const currentUser: AppUser | null = profil ? versAppUser(profil) : null;
+
   // États du parc IT
   const [societes, setSocietes] = useState<Societe[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
-  const [showUserMenu, setShowUserMenu] = useState(false);
   const [stockItems, setStockItems] = useState<ITStockItem[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [assignments, setAssignments] = useState<MaterialAssignment[]>([]);
@@ -78,10 +106,15 @@ export default function App() {
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  // 1. Récupération du jeu de données consolidé du parc IT au montage
+  // 1. Récupération du jeu de données consolidé du parc IT.
+  // Toute réponse 401 (session expirée ou révoquée) ramène à l'écran de connexion.
   const fetchSourcingData = async () => {
     try {
       const response = await fetch("/api/data");
+      if (response.status === 401) {
+        setProfil(null);
+        return;
+      }
       if (response.ok) {
         const payload = await response.json();
         // Clés API en français (AGENTS.md « Langue des clés ») ;
@@ -89,7 +122,6 @@ export default function App() {
         const { societes, utilisateurs: users, articles: stockItems, mouvements: stockMovements, affectations: assignments } = payload.data;
         setSocietes(societes);
         setUsers(users);
-        setCurrentUser((prev) => prev ?? users[0] ?? null);
         setStockItems(stockItems);
         setStockMovements(stockMovements);
         setAssignments(assignments);
@@ -101,23 +133,87 @@ export default function App() {
     }
   };
 
+  // Interroge le serveur sur l'identité de la session courante.
+  const chargerProfil = async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (!res.ok) {
+        setProfil(null);
+        return false;
+      }
+      const payload = await res.json();
+      setProfil(payload.data as ProfilUtilisateur);
+      return true;
+    } catch {
+      setProfil(null);
+      return false;
+    } finally {
+      setAuthVerifiee(true);
+    }
+  };
+
   useEffect(() => {
-    fetchSourcingData();
+    (async () => {
+      const connecte = await chargerProfil();
+      if (connecte) await fetchSourcingData();
+      else setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Changement d'utilisateur de session
-  const handleSwitchUser = (user: AppUser) => {
-    setCurrentUser(user);
-    setShowUserMenu(false);
+  const handleConnexion = async (nouveauProfil: ProfilUtilisateur) => {
+    setProfil(nouveauProfil);
+    setLoading(true);
+    await fetchSourcingData();
     addNotification(
-      "Session Utilisateur Active Modifiée",
-      `Vous agissez désormais sous l'identité de ${user.name} (${user.role}).`,
+      "Connexion établie",
+      `Bienvenue ${nouveauProfil.name} — rôle ${nouveauProfil.role.nom}.`,
       "info"
     );
   };
 
+  const handleDeconnexion = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Le cookie est effacé côté serveur de toute façon ; on sort proprement.
+    }
+    setProfil(null);
+    setUsers([]);
+    setSocietes([]);
+    setStockItems([]);
+    setStockMovements([]);
+    setAssignments([]);
+    setActiveTab("dashboard");
+  };
+
+  // Vérification de session au démarrage.
+  if (!authVerifiee) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center space-y-3 font-sans">
+        <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+        <p className="text-xs text-slate-500 font-semibold">Vérification de la session...</p>
+      </div>
+    );
+  }
+
+  // Pas de session valide : écran de connexion, rien d'autre n'est rendu.
+  if (!profil) {
+    return <LoginPage onConnexion={handleConnexion} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
+
+      {/* Changement de mot de passe obligatoire : fenêtre bloquante. */}
+      {profil.doitChangerMdp && (
+        <ChangePasswordModal
+          onChangeEffectue={async () => {
+            const connecte = await chargerProfil();
+            if (connecte) await fetchSourcingData();
+          }}
+        />
+      )}
       
       {/* PANneau LATÉRAL DE NAVIGATION REPLIABLE */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0">
@@ -191,7 +287,8 @@ export default function App() {
           </div>
           {currentUser ? (
             <p className="leading-relaxed">
-              Connecté : <strong className="text-slate-300">{currentUser.name}</strong> ({currentUser.role}). Devise : Dirham Marocain (MAD).
+              Connecté : <strong className="text-slate-300">{currentUser.name}</strong> ({currentUser.role.nom}).
+              Devise : Dirham Marocain (MAD).
             </p>
           ) : (
             <p className="leading-relaxed">
@@ -222,108 +319,41 @@ export default function App() {
           </div>
           <div className="flex items-center flex-wrap gap-3 text-xs font-semibold text-slate-500">
             
-            {/* SÉLECTEUR D'UTILISATEUR & PROFIL */}
-            {currentUser && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowUserMenu(!showUserMenu)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition cursor-pointer ${
-                    showUserMenu
-                      ? "bg-purple-50 border-purple-300 text-purple-900 ring-2 ring-purple-100"
-                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                  }`}
-                  title="Changer de session utilisateur pour tester les rôles et permissions"
-                >
-                  <div className="w-6 h-6 rounded-lg bg-purple-600 text-white font-black flex items-center justify-center text-[10px] shrink-0">
-                    {currentUser.name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .substring(0, 2)}
-                  </div>
-                  <div className="text-left">
-                    <p className="text-xs font-black text-slate-800 leading-tight flex items-center gap-1.5">
-                      <span>{currentUser.name}</span>
-                      <span
-                        className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded ${
-                          currentUser.role === "ADMIN"
-                            ? "bg-purple-100 text-purple-800"
-                            : currentUser.role === "AUDITOR"
-                            ? "bg-sky-100 text-sky-800"
-                            : "bg-emerald-100 text-emerald-800"
-                        }`}
-                      >
-                        {currentUser.role}
-                      </span>
-                    </p>
-                  </div>
-                  <ChevronDown size={14} className="text-slate-400" />
-                </button>
-
-                {/* MENU DÉROULANT DE CHANGEMENT D'UTILISATEUR */}
-                {showUserMenu && (
-                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 shadow-xl rounded-2xl overflow-hidden z-50 text-slate-800">
-                    <div className="p-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-slate-100">
-                      <p className="text-[10px] font-black uppercase text-purple-700 tracking-wider">Session Active</p>
-                      <p className="text-xs font-black text-slate-900 mt-0.5">{currentUser.name}</p>
-                      <p className="text-[11px] text-slate-500">{currentUser.jobTitle}</p>
-                      <div className="mt-2 pt-2 border-t border-purple-100 flex items-center justify-between text-[10.5px]">
-                        <span className="text-slate-500">Société :</span>
-                        <strong className="text-purple-900 font-bold">
-                          {currentUser.societe ? currentUser.societe.nom : "Non rattaché"}
-                        </strong>
-                      </div>
-                    </div>
-
-                    <div className="p-2 border-b border-slate-100">
-                      <p className="text-[9.5px] font-bold text-slate-400 uppercase px-2 py-1 tracking-wider">
-                        Changer de profil (Simulation RBAC)
-                      </p>
-                      <div className="space-y-1 max-h-48 overflow-y-auto">
-                        {users.map((u) => {
-                          const isSelected = u.id === currentUser.id;
-                          return (
-                            <button
-                              key={u.id}
-                              onClick={() => handleSwitchUser(u)}
-                              className={`w-full text-left p-2 rounded-xl text-xs flex items-center justify-between transition cursor-pointer ${
-                                isSelected ? "bg-purple-100 text-purple-900 font-bold" : "hover:bg-slate-50 text-slate-700"
-                              }`}
-                            >
-                              <div>
-                                <p className="font-bold leading-tight flex items-center gap-1.5">
-                                  <span>{u.name}</span>
-                                  {u.status !== "Actif" && (
-                                    <span className="text-[9px] bg-rose-100 text-rose-700 px-1 py-0.2 rounded font-extrabold">
-                                      {u.status}
-                                    </span>
-                                  )}
-                                </p>
-                                <p className="text-[10px] text-slate-400">{u.jobTitle || u.role}</p>
-                              </div>
-                              {isSelected && <CheckCircle2 size={14} className="text-purple-600 shrink-0" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="p-2 bg-slate-50">
-                      <button
-                        onClick={() => {
-                          setActiveTab("users");
-                          setShowUserMenu(false);
-                        }}
-                        className="w-full py-1.5 px-2.5 text-center text-xs font-bold text-purple-700 hover:bg-purple-100/60 rounded-xl transition cursor-pointer"
-                      >
-                        Gérer tous les utilisateurs & droits
-                      </button>
-                    </div>
-                  </div>
+            {/* IDENTITÉ DE SESSION RÉELLE (cookie HttpOnly côté serveur) */}
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-slate-50 border-slate-200 text-slate-700"
+              title={`Connecté en tant que ${profil.username} — ${profil.role.nom}`}
+            >
+              <div className="w-6 h-6 rounded-lg bg-purple-600 text-white font-black flex items-center justify-center text-[10px] shrink-0">
+                {profil.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .join("")
+                  .substring(0, 2)}
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-black text-slate-800 leading-tight flex items-center gap-1.5">
+                  <span>{profil.name}</span>
+                  <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-purple-100 text-purple-800">
+                    {profil.role.nom}
+                  </span>
+                </p>
+                {profil.societe && (
+                  <p className="text-[9px] text-slate-400 leading-tight">{profil.societe.nom}</p>
                 )}
               </div>
-            )}
+            </div>
+
+            {/* DÉCONNEXION : détruit la session serveur, pas seulement l'affichage */}
+            <button
+              type="button"
+              onClick={handleDeconnexion}
+              title="Terminer la session"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-white border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 transition cursor-pointer"
+            >
+              <LogOut size={14} />
+              <span>Déconnexion</span>
+            </button>
 
             {/* CLOCHE DE NOTIFICATIONS EN TEMPS RÉEL */}
             <div className="relative">
@@ -498,6 +528,7 @@ export default function App() {
                 <SocietesManagement
                   societes={societes}
                   currentUser={currentUser}
+                  permissions={profil.permissions}
                   onRefresh={fetchSourcingData}
                   addNotification={addNotification}
                 />
@@ -507,9 +538,14 @@ export default function App() {
                   users={users}
                   societes={societes}
                   currentUser={currentUser}
+                  permissions={profil.permissions}
                   onUpdateUsers={setUsers}
-                  onSwitchUser={handleSwitchUser}
-                  onRefresh={fetchSourcingData}
+                  onRefresh={async () => {
+                    await fetchSourcingData();
+                    // L'identité de session peut avoir changé (auto-édition,
+                    // changement de rôle) : on resynchronise.
+                    await chargerProfil();
+                  }}
                 />
               )}
             </div>

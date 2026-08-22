@@ -329,6 +329,8 @@ Regroupe les points 1 à 4 et 12 de la demande du 22 août. Aucune authentificat
 
 **Fini quand :** un appel `curl` sans cookie sur n'importe quelle route de mutation renvoie 401, et un `AUDITOR` reçoit 403 sur une création. Test automatisé, pas vérification manuelle.
 
+**Réalisation (22 août 2026) :** livré et vérifié par `backend/scripts/verifier-non-regression.ts` (48 contrôles automatisés). Écarts assumés : champ d'activation nommé `status` (enum existant, non `actif`) ; routes `/api/auth/me` (et non `/moi`) ; six permissions effectives simplifiées (`utilisateurs.gerer`, `societes.gerer`, `stock.ecrire`, `affectations.ecrire`, `audit.consulter`, `parametres.gerer`) couvrant l'existant, la table `Permission` restant prête à être peuplée finement ; rate limiting indexé sur `IP + identifiant` (l'email seul laisse un attaquant changer d'identifiant à IP fixe) ; le prérequis « extension soft delete ne couvre pas findUnique » a été levé au commit précédent ; les générateurs de références scannent désormais aussi les lignes archivées (`prismaSansFiltre`), faute de quoi la recréation après suppression violait l'unicité des références.
+
 **Attention :** la matrice de permissions existante dans `utilisateurs.service.ts` doit être remplacée, pas complétée. Deux systèmes de permissions en parallèle, c'est la garantie qu'un des deux sera contourné.
 
 **Prérequis, hérité de la revue du chantier 1 :** l'extension soft delete ne couvre pas `findUnique`. Tant que ce n'est pas corrigé, `findUnique({ where: { email } })` au login laisserait un compte archivé se connecter — ce qui annule la révocation immédiate, seule raison d'avoir choisi des sessions en base plutôt que des JWT. À corriger avant d'écrire la première ligne d'authentification.

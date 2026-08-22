@@ -10,7 +10,7 @@ export async function obtenirDonneesGlobales() {
     prisma.societe.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.utilisateur.findMany({
       orderBy: { creeLe: "desc" },
-      include: { societe: true }
+      include: { societe: true, role: { select: { code: true, nom: true } } }
     }),
     prisma.articleStock.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.mouvementStock.findMany({ orderBy: { creeLe: "desc" } }),

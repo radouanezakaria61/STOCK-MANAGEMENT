@@ -27,6 +27,12 @@ const OPERATIONS_POST_LECTURE = new Set(["findUnique", "findUniqueOrThrow"]);
 
 const client = new PrismaClient();
 
+// Client sans le filtre soft delete : réservé aux rares besoins où une ligne
+// archivée doit rester visible — notamment la génération de références
+// métier uniques (`usr-N`, `soc-N`, `STK-NNN`) : une référence portée par un
+// enregistrement supprimé reste occupée par son contrainte UNIQUE.
+export const prismaSansFiltre = client;
+
 export const prisma = client.$extends({
   query: {
     $allModels: {

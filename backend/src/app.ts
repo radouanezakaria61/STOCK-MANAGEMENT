@@ -1,14 +1,25 @@
 import express from "express";
 import path from "path";
+import helmet from "helmet";
 import { routerApi, gestionnaireErreurs, verifierBase } from "./routes/index.js";
 import { serialiser } from "./lib/serialisation.js";
 
 const app = express();
 
-app.use(express.json());
+// Derrière un reverse proxy interne : les adresses clientes viennent des
+// en-têtes X-Forwarded-*.
+app.set("trust proxy", 1);
 
-// Sérialisation unique des réponses API : Decimal → nombre, dates,
-// renommages (creeLe → createdAt, derniereConnexion → lastLogin).
+// En-têtes HTTP de sécurité de base. CSP laissée ouverte : le SPA Vite est
+// servi par ce backend en production ; un durcissement CSP viendra avec le
+// chantier « durcissement » (phase 41+).
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Limite de corps : aucune route métier n'a besoin d'un payload massif.
+app.use(express.json({ limit: "100kb" }));
+
+// Sérialisation unique des réponses API : Decimal → nombre, dates ISO,
+// champs internes filtrés — aucun renommage (AGENTS.md « Langue des clés »).
 app.use("/api", (req, res, next) => {
   const jsonOriginal = res.json.bind(res);
   res.json = ((body: unknown) => jsonOriginal(serialiser(body))) as typeof res.json;

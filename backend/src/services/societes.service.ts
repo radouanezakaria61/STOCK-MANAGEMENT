@@ -1,4 +1,4 @@
-import { prisma } from "../lib/prisma.js";
+import { prisma, prismaSansFiltre } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
 import { numeroSuivant } from "../lib/ids.js";
 
@@ -49,8 +49,9 @@ export async function creerSociete(data: EntreeSociete) {
     throw requeteInvalide(`Le code court « ${codeCourt} » est déjà utilisé par une autre société.`);
   }
 
+  // Scan incluant les sociétés archivées : leur référence reste réservée.
   const referencesExistantes = (
-    await prisma.societe.findMany({ select: { reference: true }, where: { reference: { startsWith: "soc-" } } })
+    await prismaSansFiltre.societe.findMany({ select: { reference: true }, where: { reference: { startsWith: "soc-" } } })
   ).map((s) => s.reference);
   const numero = numeroSuivant(referencesExistantes, /^soc-(\d+)$/);
 

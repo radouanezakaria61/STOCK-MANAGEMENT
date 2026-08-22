@@ -1,5 +1,5 @@
 import { Prisma, ArticleStock } from "@prisma/client";
-import { prisma } from "../lib/prisma.js";
+import { prisma, prismaSansFiltre } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
 import { dateDuJour, numeroSuivant } from "../lib/ids.js";
 import { enNombre } from "../lib/serialisation.js";
@@ -7,7 +7,11 @@ import { enNombre } from "../lib/serialisation.js";
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 async function referencesArticlesExistantes(tx?: Tx): Promise<string[]> {
-  const rows = await (tx ?? prisma).articleStock.findMany({
+  // Scan hors filtre soft delete : la référence d'un article archivé reste
+  // réservée par sa contrainte UNIQUE. (Lecture ponctuelle hors snapshot :
+  // la course concurrente éventuelle est la même qu'avant l'introduction
+  // du filtre, et sera verrouillée au chantier 9.)
+  const rows = await prismaSansFiltre.articleStock.findMany({
     select: { reference: true },
     where: { reference: { startsWith: "STK-" } }
   });

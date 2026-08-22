@@ -22,13 +22,16 @@ CREATE TABLE "societes" (
 CREATE TABLE "utilisateurs" (
     "id" TEXT NOT NULL,
     "reference" TEXT NOT NULL,
+    "username" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "telephone" TEXT NOT NULL DEFAULT '',
     "departement" TEXT NOT NULL,
     "fonction" TEXT NOT NULL,
-    "role" TEXT NOT NULL,
     "status" TEXT NOT NULL,
+    "mot_de_passe_hash" TEXT,
+    "doit_changer_mdp" BOOLEAN NOT NULL DEFAULT false,
+    "role_id" TEXT NOT NULL,
     "societe_id" TEXT,
     "url_avatar" TEXT NOT NULL DEFAULT '',
     "derniereConnexion" TIMESTAMP(3),
@@ -37,6 +40,65 @@ CREATE TABLE "utilisateurs" (
     "modifie_le" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "utilisateurs_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "roles" (
+    "id" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "nom" TEXT NOT NULL,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "roles_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "permissions" (
+    "id" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "description" TEXT,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "permissions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "roles_permissions" (
+    "role_id" TEXT NOT NULL,
+    "permission_id" TEXT NOT NULL,
+    "accorde_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "roles_permissions_pkey" PRIMARY KEY ("role_id","permission_id")
+);
+
+-- CreateTable
+CREATE TABLE "sessions" (
+    "id" TEXT NOT NULL,
+    "empreinte_jeton" TEXT NOT NULL,
+    "utilisateur_id" TEXT NOT NULL,
+    "adresse_ip" TEXT,
+    "agent_utilisateur" TEXT,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expire_le" TIMESTAMP(3) NOT NULL,
+    "derniere_activite" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "sessions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "journal_audit" (
+    "id" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "utilisateur_id" TEXT,
+    "identifiant_tente" TEXT,
+    "entite" TEXT,
+    "entite_id" TEXT,
+    "details" JSONB,
+    "adresse_ip" TEXT,
+    "agent_utilisateur" TEXT,
+    "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "journal_audit_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -178,10 +240,34 @@ CREATE UNIQUE INDEX "societes_codeCourt_key" ON "societes"("codeCourt");
 CREATE UNIQUE INDEX "utilisateurs_reference_key" ON "utilisateurs"("reference");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "utilisateurs_username_key" ON "utilisateurs"("username");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "utilisateurs_email_key" ON "utilisateurs"("email");
 
 -- CreateIndex
 CREATE INDEX "utilisateurs_societe_id_idx" ON "utilisateurs"("societe_id");
+
+-- CreateIndex
+CREATE INDEX "utilisateurs_role_id_idx" ON "utilisateurs"("role_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "roles_code_key" ON "roles"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "permissions_code_key" ON "permissions"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "sessions_empreinte_jeton_key" ON "sessions"("empreinte_jeton");
+
+-- CreateIndex
+CREATE INDEX "sessions_utilisateur_id_idx" ON "sessions"("utilisateur_id");
+
+-- CreateIndex
+CREATE INDEX "journal_audit_cree_le_idx" ON "journal_audit"("cree_le");
+
+-- CreateIndex
+CREATE INDEX "journal_audit_action_idx" ON "journal_audit"("action");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "articles_stock_reference_key" ON "articles_stock"("reference");
@@ -212,6 +298,21 @@ CREATE UNIQUE INDEX "retours_affectation_affectation_id_key" ON "retours_affecta
 
 -- AddForeignKey
 ALTER TABLE "utilisateurs" ADD CONSTRAINT "utilisateurs_societe_id_fkey" FOREIGN KEY ("societe_id") REFERENCES "societes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "utilisateurs" ADD CONSTRAINT "utilisateurs_role_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roles_permissions" ADD CONSTRAINT "roles_permissions_role_id_fkey" FOREIGN KEY ("role_id") REFERENCES "roles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "roles_permissions" ADD CONSTRAINT "roles_permissions_permission_id_fkey" FOREIGN KEY ("permission_id") REFERENCES "permissions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "sessions" ADD CONSTRAINT "sessions_utilisateur_id_fkey" FOREIGN KEY ("utilisateur_id") REFERENCES "utilisateurs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "journal_audit" ADD CONSTRAINT "journal_audit_utilisateur_id_fkey" FOREIGN KEY ("utilisateur_id") REFERENCES "utilisateurs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "mouvements_stock" ADD CONSTRAINT "mouvements_stock_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "articles_stock"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

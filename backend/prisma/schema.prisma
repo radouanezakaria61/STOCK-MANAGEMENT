@@ -22,6 +22,11 @@
 // matrice de permissions de Utilisateur disparaissent avec le module achats ;
 // le nouveau modèle Societe sert d'étiquette de rattachement (filtres),
 // pas de cloisonnement des données.
+//
+// Chantier 2b (plan v1.2, prompt maître phases 10-14) : RBAC serveur complet
+// (Role/Permission/RolePermission), sessions en base derrière un cookie
+// HttpOnly (Session + JournalAudit), Utilisateur gagne username/motDePasseHash/
+// doitChangerMdp ; la colonne `role` texte est remplacée par la FK roleId.
 
 generator client {
   provider = "prisma-client-js"
@@ -63,13 +68,18 @@ model Societe {
 model Utilisateur {
   id                String   @id @default(uuid())
   reference         String   @unique
+  username          String   @unique
   name              String   @map("nom")
   email             String   @unique
   phone             String   @default("") @map("telephone")
   department        String   @map("departement")
   jobTitle          String   @map("fonction")
-  role              String
   status            String
+  // Authentification locale (chantier 2b) : hash Argon2id uniquement.
+  // Null = compte sans accès local (SSO ultérieur).
+  motDePasseHash    String?  @map("mot_de_passe_hash")
+  doitChangerMdp    Boolean  @default(false) @map("doit_changer_mdp")
+  roleId            String   @map("role_id")
   societeId         String?  @map("societe_id")
   avatarUrl         String   @default("") @map("url_avatar")
   derniereConnexion DateTime?
@@ -79,9 +89,97 @@ model Utilisateur {
 
   // Restrict : impossible de supprimer physiquement une société qui a des comptes.
   societe Societe? @relation(fields: [societeId], references: [id], onDelete: Restrict)
+  role    Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  sessions      Session[]
+  auditsJournal JournalAudit[]
 
   @@index([societeId])
+  @@index([roleId])
   @@map("utilisateurs")
+}
+
+// ──────────────────────────── RBAC (2b) ───────────────────────────────
+
+// Rôles seedés selon la matrice §5.2 de 01-architecture.md ; les codes sont
+// des valeurs d'enum (anglais, convention AGENTS.md).
+model Role {
+  id     String @id @default(uuid())
+  code   String @unique // SUPER_ADMIN | IT_MANAGER | IT_TECHNICIAN | STOCK_MANAGER | AUDITOR | EMPLOYEE
+  nom    String
+  creeLe DateTime @default(now()) @map("cree_le")
+
+  utilisateurs Utilisateur[]
+  permissions  RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  code        String  @unique // format module.action (stock.ecrire, audit.consulter…)
+  description String?
+  creeLe      DateTime @default(now()) @map("cree_le")
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String   @map("role_id")
+  permissionId String   @map("permission_id")
+  accordeLe    DateTime @default(now()) @map("accorde_le")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("roles_permissions")
+}
+
+// ────────────────────── SESSIONS & AUDIT (2b) ─────────────────────────
+
+// Sessions serveur : le cookie porte un jeton aléatoire (48 octets) ; seule
+// son empreinte SHA-256 vit en base. Expiration glissante prolongée par
+// l'activité, plafonnée par expireLe.
+model Session {
+  id               String   @id @default(uuid())
+  tokenHash        String   @unique @map("empreinte_jeton")
+  utilisateurId    String   @map("utilisateur_id")
+  adresseIp        String?  @map("adresse_ip")
+  agentUtilisateur String?  @map("agent_utilisateur")
+  creeLe           DateTime @default(now()) @map("cree_le")
+  expireLe         DateTime @map("expire_le")
+  derniereActivite DateTime @default(now()) @map("derniere_activite")
+
+  utilisateur Utilisateur @relation(fields: [utilisateurId], references: [id], onDelete: Cascade)
+
+  @@index([utilisateurId])
+  @@map("sessions")
+}
+
+// Journal d'audit en écriture seule (AGENTS.md règle 3) : aucune modification,
+// aucune suppression. Le chantier 3 y écrira valeursAvant/valeursApres depuis
+// chaque transaction métier ; le 2b y trace déjà connexions, refus et
+// déconnexions. Jamais de mot de passe ni de secret dans ce journal.
+model JournalAudit {
+  id               String   @id @default(uuid())
+  action           String // LOGIN, LOGIN_REFUSE, LOGOUT, CHANGEMENT_MOT_DE_PASSE…
+  utilisateurId    String?  @map("utilisateur_id") // null si compte inexistant
+  identifiantTente String?  @map("identifiant_tente")
+  entite           String?
+  entiteId         String?  @map("entite_id")
+  details          Json?
+  adresseIp        String?  @map("adresse_ip")
+  agentUtilisateur String?  @map("agent_utilisateur")
+  creeLe           DateTime @default(now()) @map("cree_le")
+
+  utilisateur Utilisateur? @relation(fields: [utilisateurId], references: [id], onDelete: SetNull)
+
+  @@index([creeLe])
+  @@index([action])
+  @@map("journal_audit")
 }
 
 // ──────────────────────────── STOCK IT ────────────────────────────────

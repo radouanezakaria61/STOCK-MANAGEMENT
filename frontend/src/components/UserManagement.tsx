@@ -8,7 +8,6 @@ import {
   Phone,
   Edit2,
   Trash2,
-  LogIn,
   Lock,
   Unlock,
   ShieldCheck,
@@ -21,29 +20,52 @@ interface UserManagementProps {
   users: AppUser[];
   societes: Societe[];
   currentUser: AppUser | null;
+  // Permissions effectives de la session courante (issues de /api/auth/me).
+  // L'affichage s'y aligne ; l'autorité reste le contrôle serveur.
+  permissions: string[];
   onUpdateUsers: (users: AppUser[]) => void;
-  onSwitchUser: (user: AppUser) => void;
   onRefresh: () => Promise<void>;
 }
 
-const ROLE_LABELS: Record<UserRole, { title: string; badge: string; color: string; desc: string }> = {
-  ADMIN: {
-    title: "Administrateur Global",
+const ROLES: UserRole[] = [
+  "SUPER_ADMIN",
+  "IT_MANAGER",
+  "IT_TECHNICIAN",
+  "STOCK_MANAGER",
+  "AUDITOR",
+  "EMPLOYEE"
+];
+
+const ROLE_LABELS: Record<UserRole, { title: string; badge: string; desc: string }> = {
+  SUPER_ADMIN: {
+    title: "Super administrateur",
     badge: "bg-purple-100 text-purple-800 border-purple-200",
-    color: "text-purple-700",
-    desc: "Contrôle total du système : comptes, référentiel sociétés et parc informatique.",
+    desc: "Contrôle total : comptes, rôles, sociétés et parc informatique.",
+  },
+  IT_MANAGER: {
+    title: "Responsable IT",
+    badge: "bg-indigo-100 text-indigo-800 border-indigo-200",
+    desc: "Stock, affectations et suivi du parc ; pas de gestion des comptes.",
+  },
+  IT_TECHNICIAN: {
+    title: "Technicien IT",
+    badge: "bg-teal-100 text-teal-800 border-teal-200",
+    desc: "Mouvements de stock, affectations et restitutions sur le terrain.",
+  },
+  STOCK_MANAGER: {
+    title: "Gestionnaire de stock",
+    badge: "bg-amber-100 text-amber-800 border-amber-200",
+    desc: "Stock complet et référentiel sociétés ; pas d'affectation directe aux comptes.",
   },
   AUDITOR: {
-    title: "Auditeur & Contrôleur",
+    title: "Auditeur",
     badge: "bg-sky-100 text-sky-800 border-sky-200",
-    color: "text-sky-700",
-    desc: "Consultation en lecture seule de l'ensemble du parc et des mouvements.",
+    desc: "Lecture seule de tout le parc et consultation du journal d'audit.",
   },
-  UTILISATEUR: {
-    title: "Utilisateur Parc IT",
+  EMPLOYEE: {
+    title: "Employé",
     badge: "bg-emerald-100 text-emerald-800 border-emerald-200",
-    color: "text-emerald-700",
-    desc: "Gestion courante du parc : stock IT, affectations et dotations.",
+    desc: "Consultation du parc ; aucune écriture sur les données.",
   },
 };
 
@@ -59,8 +81,8 @@ export default function UserManagement({
   users,
   societes,
   currentUser,
+  permissions,
   onUpdateUsers,
-  onSwitchUser,
   onRefresh,
 }: UserManagementProps) {
   const [searchTerm, setSearchTerm] = useState("");
@@ -75,21 +97,25 @@ export default function UserManagement({
 
   // Form State
   const [formData, setFormData] = useState<{
+    username: string;
+    motDePasseTemporaire: string;
     name: string;
     email: string;
     phone: string;
     department: string;
     jobTitle: string;
     role: UserRole;
-    status: "Actif" | "Inactif" | "Suspendu";
+    status: "Actif" | "Inactif";
     societeId: string;
   }>({
+    username: "",
+    motDePasseTemporaire: "",
     name: "",
     email: "",
     phone: "",
     department: DEPARTMENTS[0],
     jobTitle: "",
-    role: "UTILISATEUR",
+    role: "EMPLOYEE",
     status: "Actif",
     societeId: "",
   });
@@ -97,27 +123,24 @@ export default function UserManagement({
   const [formError, setFormError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  // Seuls les administrateurs gèrent les comptes (RBAC serveur au chantier 3)
-  const canManage = currentUser?.role === "ADMIN";
+  // Alignement de l'affichage sur les permissions serveur de la session
+  // (chantier 2b : exigerPermission("utilisateurs.gerer") fait autorité).
+  const canManage = permissions.includes("utilisateurs.gerer");
 
   const libelleSociete = (user: AppUser) => user.societe?.nom ?? "Non rattaché";
-
-  // Complète un utilisateur renvoyé par l'API avec sa société déjà chargée côté client
-  const enrichir = (u: AppUser): AppUser => ({
-    ...u,
-    societe: societes.find((s) => s.id === u.societeId) ?? null,
-  });
 
   // Open Create Modal
   const handleOpenCreate = () => {
     setEditingUser(null);
     setFormData({
+      username: "",
+      motDePasseTemporaire: "",
       name: "",
       email: "",
       phone: "",
       department: DEPARTMENTS[0],
       jobTitle: "",
-      role: "UTILISATEUR",
+      role: "EMPLOYEE",
       status: "Actif",
       societeId: "",
     });
@@ -129,13 +152,15 @@ export default function UserManagement({
   const handleOpenEdit = (user: AppUser) => {
     setEditingUser(user);
     setFormData({
+      username: user.username ?? "",
+      motDePasseTemporaire: "",
       name: user.name,
       email: user.email,
       phone: user.phone || "",
       department: user.department,
       jobTitle: user.jobTitle,
-      role: user.role,
-      status: user.status,
+      role: user.role.code,
+      status: user.status === "Inactif" ? "Inactif" : "Actif",
       societeId: user.societeId ?? "",
     });
     setFormError("");
@@ -154,7 +179,15 @@ export default function UserManagement({
     setFormError("");
 
     try {
-      const corps = { ...formData, societeId: formData.societeId || null };
+      // Le mot de passe temporaire n'est transmis que s'il est renseigné :
+      // obligatoire à la création, réinitialisation volontaire en édition.
+      const { username, motDePasseTemporaire, ...reste } = formData;
+      const corps = {
+        ...reste,
+        username,
+        societeId: formData.societeId || null,
+        ...(motDePasseTemporaire ? { motDePasseTemporaire } : {}),
+      };
       const res = editingUser
         ? await fetch(`/api/users/${editingUser.id}`, {
             method: "PUT",
@@ -171,18 +204,8 @@ export default function UserManagement({
         throw new Error(result.error || "Erreur lors de l'enregistrement");
       }
 
-      const utilisateurEnrichi = enrichir(result.data);
-      const updatedUsers = editingUser
-        ? users.map((u) => (u.id === editingUser.id ? utilisateurEnrichi : u))
-        : [utilisateurEnrichi, ...users];
-      onUpdateUsers(updatedUsers);
-
-      // Si l'utilisateur édité est la session active, on bascule dessus
-      if (editingUser && currentUser?.id === editingUser.id) {
-        onSwitchUser(utilisateurEnrichi);
-      }
-
       setIsModalOpen(false);
+      // La liste et l'identité de session (si auto-édition) sont rafraîchies.
       await onRefresh();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Une erreur est survenue.");
@@ -205,12 +228,6 @@ export default function UserManagement({
         alert(result.error || "Erreur lors du changement de statut");
         return;
       }
-      const updated = users.map((u) => (u.id === user.id ? enrichir(result.data) : u));
-      onUpdateUsers(updated);
-
-      if (currentUser?.id === user.id) {
-        onSwitchUser(enrichir(result.data));
-      }
       await onRefresh();
     } catch {
       alert("Erreur réseau");
@@ -229,12 +246,6 @@ export default function UserManagement({
         alert(result.error || "Erreur lors de la suppression");
         return;
       }
-      const updated = users.filter((u) => u.id !== user.id);
-      onUpdateUsers(updated);
-
-      if (currentUser?.id === user.id && updated.length > 0) {
-        onSwitchUser(updated[0]);
-      }
       await onRefresh();
     } catch {
       alert("Erreur réseau");
@@ -249,7 +260,7 @@ export default function UserManagement({
       u.jobTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
       u.department.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchRole = roleFilter === "ALL" || u.role === roleFilter;
+    const matchRole = roleFilter === "ALL" || u.role.code === roleFilter;
     const matchDept = deptFilter === "ALL" || u.department === deptFilter;
     const matchStatus = statusFilter === "ALL" || u.status === statusFilter;
     const matchSociete =
@@ -259,7 +270,7 @@ export default function UserManagement({
   });
 
   const activeCount = users.filter((u) => u.status === "Actif").length;
-  const adminCount = users.filter((u) => u.role === "ADMIN").length;
+  const superAdmins = users.filter((u) => u.role.code === "SUPER_ADMIN").length;
 
   return (
     <div className="space-y-6" id="user-management-module">
@@ -310,8 +321,8 @@ export default function UserManagement({
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Session Active :</span>
                 <span className="text-sm font-black text-slate-900">{currentUser.name}</span>
-                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${ROLE_LABELS[currentUser.role]?.badge}`}>
-                  {ROLE_LABELS[currentUser.role]?.title}
+                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${ROLE_LABELS[currentUser.role.code]?.badge}`}>
+                  {ROLE_LABELS[currentUser.role.code]?.title}
                 </span>
                 {currentUser.status !== "Actif" && (
                   <span className="bg-rose-100 text-rose-700 text-[10px] font-extrabold px-2 py-0.5 rounded-md border border-rose-200">
@@ -369,8 +380,8 @@ export default function UserManagement({
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Administrateurs</p>
-              <h3 className="text-2xl font-black text-purple-700 mt-1">{adminCount}</h3>
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Super administrateurs</p>
+              <h3 className="text-2xl font-black text-purple-700 mt-1">{superAdmins}</h3>
               <p className="text-[11px] text-slate-500 mt-0.5">Superviseurs sécurité</p>
             </div>
             <div className="p-2 bg-purple-50 text-purple-600 rounded-xl">
@@ -415,9 +426,11 @@ export default function UserManagement({
             className="bg-slate-50 border border-slate-200 rounded-xl text-xs py-2 px-3 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500/20"
           >
             <option value="ALL">Tous les Rôles</option>
-            <option value="ADMIN">Administrateurs</option>
-            <option value="AUDITOR">Auditeurs</option>
-            <option value="UTILISATEUR">Utilisateurs</option>
+            {ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r].title}
+              </option>
+            ))}
           </select>
 
           <select
@@ -455,7 +468,6 @@ export default function UserManagement({
             <option value="ALL">Tous Statuts</option>
             <option value="Actif">Actif</option>
             <option value="Inactif">Inactif</option>
-            <option value="Suspendu">Suspendu</option>
           </select>
         </div>
       </div>
@@ -531,10 +543,10 @@ export default function UserManagement({
                     <td className="py-3.5 px-4">
                       <span
                         className={`inline-block text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
-                          ROLE_LABELS[user.role]?.badge
+                          ROLE_LABELS[user.role.code]?.badge
                         }`}
                       >
-                        {ROLE_LABELS[user.role]?.title}
+                        {ROLE_LABELS[user.role.code]?.title ?? user.role.nom}
                       </span>
                     </td>
 
@@ -576,21 +588,6 @@ export default function UserManagement({
                     {/* Actions */}
                     <td className="py-3.5 px-5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {/* Switch to this user for role testing */}
-                        <button
-                          type="button"
-                          onClick={() => onSwitchUser(user)}
-                          title="Se connecter avec cette session pour tester les habilitations"
-                          className={`p-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1 cursor-pointer ${
-                            isCurrent
-                              ? "bg-purple-600 text-white border-purple-600"
-                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
-                          }`}
-                        >
-                          <LogIn size={13} />
-                          <span className="hidden xl:inline">{isCurrent ? "Actif" : "Tester"}</span>
-                        </button>
-
                         {/* Edit */}
                         <button
                           type="button"
@@ -669,7 +666,7 @@ export default function UserManagement({
                   {editingUser ? `Modifier ${editingUser.name}` : "Créer un Nouvel Utilisateur"}
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Les habilitations sont portées par le rôle ; le RBAC serveur sera activé au chantier authentification.
+                  Les habilitations sont portées par le rôle et vérifiées côté serveur à chaque opération.
                 </p>
               </div>
               <button
@@ -700,6 +697,39 @@ export default function UserManagement({
                   placeholder="Prénom Nom"
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-slate-500 mb-1">Identifiant de connexion *</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.username}
+                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                  placeholder="prenom.nom"
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
+                  {editingUser ? "Réinitialiser le mot de passe" : "Mot de passe temporaire *"}
+                </label>
+                <input
+                  type="password"
+                  required={!editingUser}
+                  value={formData.motDePasseTemporaire}
+                  onChange={(e) => setFormData({ ...formData, motDePasseTemporaire: e.target.value })}
+                  placeholder={editingUser ? "Laisser vide pour ne rien changer" : "12 caractères min., Aa + chiffre"}
+                  autoComplete="new-password"
+                  minLength={editingUser ? undefined : 12}
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1 leading-snug">
+                  {editingUser
+                    ? "Une réinitialisation déconnecte immédiatement toutes les sessions du compte."
+                    : "À communiquer au titulaire : il devra le changer à sa première connexion."}
+                </p>
               </div>
 
               <div>
@@ -758,7 +788,7 @@ export default function UserManagement({
                   onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 >
-                  {(Object.keys(ROLE_LABELS) as UserRole[]).map((r) => (
+                  {ROLES.map((r) => (
                     <option key={r} value={r}>
                       {ROLE_LABELS[r].title}
                     </option>
@@ -790,14 +820,11 @@ export default function UserManagement({
                 <label className="block text-[11px] font-bold uppercase text-slate-500 mb-1">Statut du compte</label>
                 <select
                   value={formData.status}
-                  onChange={(e) =>
-                    setFormData({ ...formData, status: e.target.value as "Actif" | "Inactif" | "Suspendu" })
-                  }
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value as "Actif" | "Inactif" })}
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 >
                   <option value="Actif">Actif</option>
-                  <option value="Inactif">Inactif</option>
-                  <option value="Suspendu">Suspendu</option>
+                  <option value="Inactif">Inactif (connexion bloquée)</option>
                 </select>
               </div>
             </div>

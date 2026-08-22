@@ -13,7 +13,20 @@ export interface Societe {
   createdAt: string;
 }
 
-export type UserRole = "ADMIN" | "AUDITOR" | "UTILISATEUR";
+// Rôles RBAC (matrice §5.2) — codes enum anglais, libellés français via
+// LIBELLES_ROLES dans App.tsx.
+export type UserRole =
+  | "SUPER_ADMIN"
+  | "IT_MANAGER"
+  | "IT_TECHNICIAN"
+  | "STOCK_MANAGER"
+  | "AUDITOR"
+  | "EMPLOYEE";
+
+export interface RoleRef {
+  code: UserRole;
+  nom: string;
+}
 
 export interface SocieteRef {
   id: string;
@@ -25,18 +38,39 @@ export interface SocieteRef {
 
 export interface AppUser {
   id: string;
+  reference?: string;
+  username?: string;
   name: string;
   email: string;
   phone?: string;
   department: string;
   jobTitle: string;
-  role: UserRole;
+  role: RoleRef;
   status: "Actif" | "Inactif" | "Suspendu";
   societeId?: string | null;
   societe?: SocieteRef | null;
   avatarUrl?: string;
   creeLe: string;
   derniereConnexion?: string;
+}
+
+// Profil renvoyé par /api/auth/me et /api/auth/login : le rôle est un objet
+// {code, nom}, accompagné des permissions effectives du compte.
+export interface ProfilUtilisateur {
+  id: string;
+  reference: string;
+  username: string;
+  name: string;
+  email: string;
+  avatarUrl: string;
+  department: string;
+  jobTitle: string;
+  status: string;
+  role: RoleRef;
+  societe: { id: string; nom: string } | null;
+  derniereConnexion: string | null;
+  doitChangerMdp: boolean;
+  permissions: string[];
 }
 
 export type StockCategory = 

@@ -16,6 +16,9 @@ import {
 interface SocietesManagementProps {
   societes: Societe[];
   currentUser: AppUser | null;
+  // Permissions effectives de la session (l'autorité reste côté serveur :
+  // exigerPermission("societes.gerer") protège les routes mutantes).
+  permissions?: string[];
   onRefresh: () => Promise<void>;
   addNotification: (
     title: string,
@@ -50,6 +53,7 @@ const FORMULAIRE_VIDE: FormulaireSociete = {
 export default function SocietesManagement({
   societes,
   currentUser,
+  permissions = [],
   onRefresh,
   addNotification,
 }: SocietesManagementProps) {
@@ -61,7 +65,7 @@ export default function SocietesManagement({
   const [formError, setFormError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const canManage = currentUser?.role === "ADMIN";
+  const canManage = permissions.includes("societes.gerer");
 
   const filteredSocietes = societes.filter((s) => {
     const q = searchTerm.toLowerCase();

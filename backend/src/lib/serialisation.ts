@@ -22,7 +22,7 @@ const CHAMPS_DATE_SEULE = new Set([
 ]);
 
 // Champs internes jamais exposés par le contrat d'API.
-const CHAMPS_SUPPRIMES = new Set(["supprimeLe", "modifieLe"]);
+const CHAMPS_SUPPRIMES = new Set(["supprimeLe", "modifieLe", "motDePasseHash", "tokenHash"]);
 
 function dateSeule(d: Date): string {
   return d.toISOString().slice(0, 10);

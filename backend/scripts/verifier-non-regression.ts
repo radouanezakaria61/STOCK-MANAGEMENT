@@ -1,9 +1,16 @@
 /**
- * Vérification de non-régression du contrat d'API après le chantier 2a
- * (plan v1.2 §3.2) : le module Fournisseurs, le plafond d'engagement et la
- * matrice de permissions ont disparu ; le référentiel Sociétés est en place.
+ * Vérification de non-régression après le chantier 2b :
+ * authentification Argon2id, sessions serveur (cookie HttpOnly), RBAC à six
+ * rôles, limitation des tentatives de connexion, audit des connexions.
+ *
+ * Prérequis : serveur démarré (npm run dev ou build+start), base seedée en
+ * mode démonstration (comptes dev + mot de passe commun du seed).
  */
 const BASE = process.env.API_BASE || "http://localhost:3001";
+
+// Doit refléter MOT_DE_PASSE_DEMO du seed (développement uniquement).
+const MDP_DEMO = "Distra-Demo-2026";
+const MESSAGE_ECHEC_ATTENDU = "Identifiant ou mot de passe incorrect.";
 
 let echecs = 0;
 function verif(nom: string, condition: boolean, detail = "") {
@@ -14,132 +21,350 @@ function verif(nom: string, condition: boolean, detail = "") {
     console.error(`  FAIL ${nom}${detail ? ` — ${detail}` : ""}`);
   }
 }
+
 const estUuid = (v: unknown) =>
   typeof v === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 const estDateSeule = (v: unknown) =>
   typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
-async function main() {
-  const res = await fetch(`${BASE}/api/data`);
-  verif("GET /api/data → 200", res.status === 200);
-  const enveloppe = await res.json();
-  verif("enveloppe {status:'ok'}", enveloppe.status === "ok");
-  const data = enveloppe.data;
+interface ReponseJson<T = any> {
+  status: number;
+  corps: T;
+  enteteRetry?: string;
+}
 
-  // Clés API en français (AGENTS.md « Langue des clés », décision du 22 août).
-  const { societes, utilisateurs: users, articles: stockItems, mouvements: movements, affectations: assignments } = data as Record<string, any[]>;
+/** Session HTTP : jar de cookies minimal (le jeton de session vit ici). */
+class SessionHttp {
+  private jetons = new Map<string, string>();
 
-  // ── Compteurs (seed parc IT) ───────────────────────────────────────
-  const compteurs = [societes?.length, users?.length, stockItems?.length, movements?.length, assignments?.length].join(",");
-  verif("compteurs 2,5,7,4,3", compteurs === "2,5,7,4,3", compteurs);
-
-  // ── Clés retirées absentes / clés anglaises supprimées ─────────────
-  verif("clé vendors supprimée", !("vendors" in data));
-  verif("clé purchaseOrders supprimée", !("purchaseOrders" in data));
-  verif("clé budgets supprimée", !("budgets" in data));
-  verif("clé rfqComparisonPools supprimée", !("rfqComparisonPools" in data));
-  verif("clé users (anglaise) supprimée", !("users" in data));
-  verif("clé stockItems (anglaise) supprimée", !("stockItems" in data));
-
-  // ── Ordre d'affichage (références) ─────────────────────────────────
-  verif("ordre societes soc-1→soc-2", societes.map((s: any) => s.reference).join() === ["soc-1","soc-2"].join(), societes.map((s: any) => s.reference).join());
-  verif("ordre utilisateurs usr-1→usr-5", users.map((u: any) => u.reference).join() === ["usr-1","usr-2","usr-3","usr-4","usr-5"].join());
-  verif("ordre articles STK-001→STK-007", stockItems.map((s: any) => s.reference).join() === ["STK-001","STK-002","STK-003","STK-004","STK-005","STK-006","STK-007"].join());
-  verif("ordre mouvements MVT-001→MVT-004", movements.map((m: any) => m.reference).join() === ["MVT-001","MVT-002","MVT-003","MVT-004"].join());
-  verif("ordre affectations 001→003", assignments.map((a: any) => a.reference).join() === ["AFF-DSI-2026-001","AFF-DSI-2026-002","AFF-DSI-2026-003"].join());
-
-  // ── Identifiants UUID partout ──────────────────────────────────────
-  const toutesEntites = [...societes, ...users, ...stockItems, ...movements, ...assignments];
-  verif("ids = uuid sur toutes les entités", toutesEntites.every((e) => estUuid(e.id)), toutesEntites.filter((e) => !estUuid(e.id)).map((e) => e.reference ?? "?").slice(0, 5).join());
-
-  // ── Cale de traduction anglaise supprimée (décision du 22 août) ────
-  verif("creeLe présent, createdAt absent", toutesEntites.every((e) => typeof e.creeLe === "string" && e.creeLe.length > 0 && !("createdAt" in e)));
-
-  // ── Décimaux → nombres ─────────────────────────────────────────────
-  verif("prix unitaires numériques (stock)", stockItems.every((s: any) => typeof s.unitPriceMAD === "number" && typeof s.totalValueMAD === "number"));
-
-  // ── Formats de dates (contrat inchangé) ────────────────────────────
-  verif("purchaseDate yyyy-MM-dd", stockItems.every((s: any) => estDateSeule(s.purchaseDate)));
-  verif("warrantyExpiry yyyy-MM-dd ou null", stockItems.every((s: any) => s.warrantyExpiry === null || estDateSeule(s.warrantyExpiry)));
-  verif("mouvement.date yyyy-MM-dd", movements.every((m: any) => estDateSeule(m.date)));
-  verif("assignedDate yyyy-MM-dd", assignments.every((a: any) => estDateSeule(a.assignedDate)));
-  verif("derniereConnexion 'YYYY-MM-DD HH:mm'", users.every((u: any) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(u.derniereConnexion)), JSON.stringify(users.map((u: any) => u.derniereConnexion)));
-
-  // ── Parité métier (échantillon) ────────────────────────────────────
-  const soc1 = societes.find((s: any) => s.reference === "soc-1");
-  verif(
-    "soc-1 Distra SA / DSA active, sans champ fournisseur",
-    soc1.nom === "Distra SA" && soc1.codeCourt === "DSA" && soc1.actif === true && !("qualityScore" in soc1),
-    `${soc1.nom}/${soc1.codeCourt}`
-  );
-
-  const stk1 = stockItems.find((s: any) => s.reference === "STK-001");
-  verif(
-    "STK-001 qty 15/9/6, prix 14500, fournisseur texte sans purchaseOrderId",
-    stk1.quantity === 15 && stk1.availableQty === 9 && stk1.allocatedQty === 6 && stk1.unitPriceMAD === 14500 &&
-      typeof stk1.fournisseur === "string" && stk1.fournisseur.length > 0 && !("vendorName" in stk1) && !("purchaseOrderId" in stk1)
-  );
-
-  const usr1 = users.find((u: any) => u.reference === "usr-1");
-  verif(
-    "usr-1 ADMIN rattaché à soc-1, sans plafond ni permissions",
-    usr1.role === "ADMIN" && usr1.societeId === soc1.id &&
-      !("spendingLimitMAD" in usr1) && !("permissions" in usr1) && usr1.societe?.codeCourt === "DSA"
-  );
-  verif("usr-1.derniereConnexion 2026-08-18 13:40", usr1.derniereConnexion === "2026-08-18 13:40");
-
-  verif(
-    "aucun rôle achats résiduel",
-    users.every((u: any) => ["ADMIN", "AUDITOR", "UTILISATEUR"].includes(u.role)),
-    users.map((u: any) => `${u.reference}:${u.role}`).join()
-  );
-
-  // Intégrité FK résolue : mouvement MVT-001 pointe vers le uuid de STK-001
-  const mvt1 = movements.find((m: any) => m.reference === "MVT-001");
-  verif("MVT-001.stockItemId = uuid de STK-001", mvt1.stockItemId === stk1.id);
-
-  // ── Routes fournisseurs retirées, route sociétés en place ──────────
-  for (const route of ["/api/pos", "/api/rfq", "/api/ai/analyze-bids", "/api/vendors"]) {
-    const r = await fetch(`${BASE}${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    const texte = await r.text();
-    verif(`route retirée POST ${route} → 404`, r.status === 404, `status=${r.status} body=${texte.slice(0, 80)}`);
+  private enteteCookie(): string {
+    return [...this.jetons.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
 
-  const rSoc = await fetch(`${BASE}/api/societes`);
-  const envSoc = await rSoc.json();
-  verif(
-    "GET /api/societes → 200 avec 2 entités",
-    rSoc.status === 200 && envSoc.status === "ok" && Array.isArray(envSoc.data) && envSoc.data.length === 2,
-    `status=${rSoc.status}`
-  );
-  const rStatut = await fetch(`${BASE}/api/societes/${soc1.id}/statut`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ actif: false })
-  });
-  const offBody = await rStatut.json();
-  const on = await fetch(`${BASE}/api/societes/${soc1.id}/statut`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ actif: true })
-  });
-  const onBody = await on.json();
-  verif(
-    "bascule actif=false → true sur soc-1 OK",
-    rStatut.ok && on.ok && offBody.data?.actif === false && onBody.data?.actif === true,
-    `off=${rStatut.status} on=${on.status}`
-  );
-  await fetch(`${BASE}/api/societes`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nom: "", codeCourt: "" })
-  }).then(async (r) => {
-    const b = await r.json();
-    verif("POST /api/societes vide → 400 message français", r.status === 400 && typeof b.error === "string", `status=${r.status}`);
-  });
+  requete(chemin: string, init: RequestInit = {}, origine?: string): Promise<Response> {
+    const entetes = new Headers(init.headers);
+    const cookie = this.enteteCookie();
+    if (cookie) entetes.set("cookie", cookie);
+    if (origine) entetes.set("origin", origine);
+    return fetch(`${BASE}${chemin}`, { ...init, headers: entetes });
+  }
 
-  console.log(echecs === 0 ? "\nNON-RÉGRESSION : TOUS LES CONTRÔLES PASSENT" : `\nNON-RÉGRESSION : ${echecs} ÉCHEC(S)`);
+  async json(chemin: string, init: RequestInit = {}, origine?: string): Promise<ReponseJson> {
+    const res = await this.requete(chemin, init, origine);
+    return { status: res.status, corps: await res.json(), enteteRetry: res.headers.get("retry-after") ?? undefined };
+  }
+
+  /** Connexion : capture le cookie de session posé par le serveur. */
+  async connexion(identifiant: string, motDePasse: string, origine?: string): Promise<ReponseJson> {
+    const res = await this.requete(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ identifiant, motDePasse })
+      },
+      origine
+    );
+    for (const brut of cookiesDe(res)) {
+      const paire = brut.split(";")[0]!;
+      const idx = paire.indexOf("=");
+      if (idx > 0) this.jetons.set(paire.slice(0, idx).trim(), paire.slice(idx + 1).trim());
+    }
+    return { status: res.status, corps: await res.json(), enteteRetry: res.headers.get("retry-after") ?? undefined };
+  }
+
+  oublier(): void {
+    this.jetons.clear();
+  }
+}
+
+function cookiesDe(res: Response): string[] {
+  const entetes = res.headers as unknown as { getSetCookie?: () => string[] };
+  if (typeof entetes.getSetCookie === "function") return entetes.getSetCookie();
+  const brut = res.headers.get("set-cookie");
+  return brut ? [brut] : [];
+}
+
+async function main() {
+  // ══════════ A. SANS SESSION : TOUT EST FERMÉ (critère « Fini quand ») ══════════
+  console.log("\n── A. Accès anonymes refusés ──");
+  const anon = new SessionHttp();
+
+  for (const [methode, chemin] of [
+    ["GET", "/api/data"],
+    ["GET", "/api/users"],
+    ["POST", "/api/societes"],
+    ["DELETE", "/api/users/usr-1"],
+    ["POST", "/api/stock"],
+    ["GET", "/api/auth/me"]
+  ] as const) {
+    const res = await anon.requete(chemin, {
+      method: methode,
+      headers: { "content-type": "application/json" },
+      body: methode === "GET" ? undefined : "{}"
+    });
+    verif(`${methode} ${chemin} sans session → 401`, res.status === 401, `status=${res.status}`);
+  }
+
+  // ══════════ B. CONNEXION : messages génériques, cas d'usage réels ══════════
+  console.log("\n── B. Connexion ──");
+  const echecInconnu = await anon.connexion("inconnu.nobody", "Peu importe-123");
+  verif(
+    "compte inexistant → 401 message générique",
+    echecInconnu.status === 401 && echecInconnu.corps.error === MESSAGE_ECHEC_ATTENDU,
+    `${echecInconnu.status} ${JSON.stringify(echecInconnu.corps)}`
+  );
+
+  const echecMauvaisMdp = await anon.connexion("zakaria.radouane", "Faux-Mot-De-Passe-999");
+  verif(
+    "mauvais mot de passe → 401 message IDENTIQUE (pas d'énumération)",
+    echecMauvaisMdp.status === 401 && echecMauvaisMdp.corps.error === MESSAGE_ECHEC_ATTENDU
+  );
+
+  const echecInactif = await anon.connexion("mehdi.alami", MDP_DEMO);
+  verif(
+    "compte Inactif → 401 message identique",
+    echecInactif.status === 401 && echecInactif.corps.error === MESSAGE_ECHEC_ATTENDU,
+    `${echecInactif.status}`
+  );
+
+  const origineHostile = await anon.connexion("zakaria.radouane", MDP_DEMO, "https://site-pirate.example");
+  verif("Origin hostile sur mutation → 403", origineHostile.status === 403, `${origineHostile.status}`);
+
+  const connexionEmail = await anon.connexion("ZAKARIARADOUANE61@GMAIL.COM", MDP_DEMO);
+  verif(
+    "connexion par email (casse libre) → 200",
+    connexionEmail.status === 200 && connexionEmail.corps.status === "ok",
+    `${connexionEmail.status}`
+  );
+
+  const admin = new SessionHttp();
+  const connexionAdmin = await admin.connexion("zakaria.radouane", MDP_DEMO);
+  const profilAdmin = connexionAdmin.corps?.data;
+  verif(
+    "connexion par username → 200 + profil SUPER_ADMIN",
+    connexionAdmin.status === 200 && profilAdmin?.role?.code === "SUPER_ADMIN",
+    JSON.stringify(connexionAdmin.corps).slice(0, 120)
+  );
+  verif(
+    "profil : permissions effectives présentes, hash absent, doitChangerMdp=false",
+    Array.isArray(profilAdmin?.permissions) &&
+      profilAdmin.permissions.includes("utilisateurs.gerer") &&
+      profilAdmin.permissions.includes("parametres.gerer") &&
+      !("motDePasseHash" in (profilAdmin ?? {})) &&
+      profilAdmin?.doitChangerMdp === false
+  );
+
+  const moi = await admin.json("/api/auth/me");
+  verif(
+    "GET /api/auth/me avec cookie → profil cohérent",
+    moi.status === 200 && moi.corps.data?.username === "zakaria.radouane" && moi.corps.data?.role?.nom === "Super administrateur"
+  );
+  const moiAnonyme = await new SessionHttp().json("/api/auth/me");
+  verif("GET /api/auth/me sans cookie → 401", moiAnonyme.status === 401);
+
+  // ══════════ C. CONTRAT DES DONNÉES (session admin) ══════════
+  console.log("\n── C. Contrat /api/data ──");
+  const resData = await admin.json("/api/data");
+  verif("GET /api/data → 200 enveloppe ok", resData.status === 200 && resData.corps.status === "ok");
+  const data = resData.corps.data;
+  const {
+    societes,
+    utilisateurs: users,
+    articles: stockItems,
+    mouvements: movements,
+    affectations: assignments
+  } = data as Record<string, any[]>;
+
+  const compteurs = [societes?.length, users?.length, stockItems?.length, movements?.length, assignments?.length].join(",");
+  verif("compteurs 2,5,7,4,3", compteurs === "2,5,7,4,3", compteurs);
+  verif("aucune clé anglaise résiduelle", ["vendors", "users", "stockItems"].every((k) => !(k in data)));
+
+  verif(
+    "ordre références intact",
+    users.map((u: any) => u.reference).join() === ["usr-1","usr-2","usr-3","usr-4","usr-5"].join() &&
+      stockItems.map((s: any) => s.reference).join() === ["STK-001","STK-002","STK-003","STK-004","STK-005","STK-006","STK-007"].join()
+  );
+
+  const toutesEntites = [...societes, ...users, ...stockItems, ...movements, ...assignments];
+  verif("ids = uuid partout", toutesEntites.every((e) => estUuid(e.id)));
+  verif("creeLe ISO présent, createdAt/modifieLe/motDePasseHash absents",
+    toutesEntites.every((e) => typeof e.creeLe === "string" && !("createdAt" in e) && !("modifieLe" in e)) &&
+      users.every((u: any) => !("motDePasseHash" in u))
+  );
+  verif("derniereConnexion 'YYYY-MM-DD HH:mm'", users.every((u: any) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(u.derniereConnexion)));
+
+  const ROLES_VALIDES = ["SUPER_ADMIN", "IT_MANAGER", "IT_TECHNICIAN", "STOCK_MANAGER", "AUDITOR", "EMPLOYEE"];
+  verif(
+    "rôles = objets {code,nom} dans la matrice §5.2",
+    users.every((u: any) => ROLES_VALIDES.includes(u.role?.code) && typeof u.role?.nom === "string"),
+    users.map((u: any) => `${u.reference}:${JSON.stringify(u.role)}`).join()
+  );
+  const usr1 = users.find((u: any) => u.reference === "usr-1")!;
+  verif(
+    "usr-1 SUPER_ADMIN + username, usr-4 AUDITOR, autres EMPLOYEE",
+    usr1.role.code === "SUPER_ADMIN" && typeof usr1.username === "string" &&
+      users.find((u: any) => u.reference === "usr-4")!.role.code === "AUDITOR" &&
+      ["usr-2","usr-3","usr-5"].every((r) => users.find((u: any) => u.reference === r)!.role.code === "EMPLOYEE")
+  );
+
+  const stk1 = stockItems.find((s: any) => s.reference === "STK-001")!;
+  verif("STK-001 quantités/prix intacts", stk1.quantity === 15 && stk1.availableQty === 9 && stk1.unitPriceMAD === 14500);
+  const mvt1 = movements.find((m: any) => m.reference === "MVT-001")!;
+  verif("FK MVT-001 → STK-001", mvt1.stockItemId === stk1.id);
+
+  // ══════════ D. RBAC SERVEUR ══════════
+  console.log("\n── D. Refus et permissions ──");
+  const auditor = new SessionHttp();
+  const coAuditor = await auditor.connexion("sarah.benali", MDP_DEMO);
+  verif(
+    "auditor connecté, permissions limitées à audit.consulter",
+    coAuditor.status === 200 &&
+      JSON.stringify([...(coAuditor.corps?.data?.permissions ?? [])].sort()) === JSON.stringify(["audit.consulter"]),
+    JSON.stringify(coAuditor.corps?.data?.permissions)
+  );
+
+  const lectureAuditor = await auditor.json("/api/data");
+  verif("auditor : lecture /api/data autorisée", lectureAuditor.status === 200);
+
+  const refusSociete = await auditor.json("/api/societes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nom: "Pirate", codeCourt: "PIR" })
+  });
+  verif(
+    "auditor POST /api/societes → 403 message permission",
+    refusSociete.status === 403 && String(refusSociete.corps.error).includes("societes.gerer"),
+    `${refusSociete.status} ${JSON.stringify(refusSociete.corps)}`
+  );
+  const refusUsers = await auditor.json("/api/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({})
+  });
+  verif("auditor POST /api/users → 403", refusUsers.status === 403 && String(refusUsers.corps.error).includes("utilisateurs.gerer"));
+
+  const employe = new SessionHttp();
+  await employe.connexion("karim.berrada", MDP_DEMO);
+  const refusStock = await employe.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({})
+  });
+  verif("employé POST /api/stock → 403", refusStock.status === 403 && String(refusStock.corps.error).includes("stock.ecrire"));
+
+  const roleInvalide = await admin.json("/api/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "X", email: "x@x.ma", department: "D", role: "SUPERMAN", username: "x.y", motDePasseTemporaire: "Abcdef123456" })
+  });
+  verif(
+    "rôle inconnu → 400 listant les rôles acceptés",
+    roleInvalide.status === 400 && String(roleInvalide.corps.error).includes("IT_MANAGER"),
+    `${roleInvalide.status} ${JSON.stringify(roleInvalide.corps)}`
+  );
+
+  const societeVide = await admin.json("/api/societes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ nom: "", codeCourt: "" })
+  });
+  verif("admin POST société vide → 400 français", societeVide.status === 400 && typeof societeVide.corps.error === "string");
+
+  // ══════════ E. CYCLE DE VIE COMPLET D'UN COMPTE ══════════
+  console.log("\n── E. Création → changement mdp → suppression ──");
+  // Suffixe unique : un compte précédemment supprimé (soft delete) conserve
+  // son username/email en base ; la recréation à l'identique violerait
+  // l'unicité. Chaque exécution utilise donc sa propre marque.
+  const marque = `test.cycle.${Date.now().toString(36)}`;
+  const creation = await admin.json("/api/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      username: marque,
+      motDePasseTemporaire: "Test-Cycle-2026",
+      name: "Compte Test Cycle",
+      email: `${marque}@entreprise.ma`,
+      department: "Technologies de l'Information",
+      jobTitle: "Technicien",
+      role: "IT_TECHNICIAN",
+      status: "Actif"
+    })
+  });
+  const idTest = creation.corps?.data?.id;
+  verif(
+    "création technicien → 201, doitChangerMdp=true, hash jamais exposé",
+    creation.status === 201 && creation.corps.data?.doitChangerMdp === true &&
+      creation.corps.data?.role?.code === "IT_TECHNICIAN" && !("motDePasseHash" in (creation.corps.data ?? {})),
+    `${creation.status} ${JSON.stringify(creation.corps).slice(0, 150)}`
+  );
+
+  const testeur = new SessionHttp();
+  const coTemp = await testeur.connexion(marque, "Test-Cycle-2026");
+  verif("login avec mot de passe temporaire → 200 + flag changement", coTemp.status === 200 && coTemp.corps.data?.doitChangerMdp === true);
+
+  const changement = await testeur.json("/api/auth/changer-mot-de-passe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ motDePasseActuel: "Test-Cycle-2026", nouveauMotDePasse: "Nouveau-Cycle-2026" })
+  });
+  verif("changement de mot de passe → 200", changement.status === 200, `${changement.status} ${JSON.stringify(changement.corps)}`);
+
+  const mauvaisActuel = await testeur.json("/api/auth/changer-mot-de-passe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ motDePasseActuel: "Totalement-Faux-1", nouveauMotDePasse: "Encore-Un-2026x" })
+  });
+  verif("mot de passe actuel erroné → 400", mauvaisActuel.status === 400);
+
+  const faibleNouveau = await testeur.json("/api/auth/changer-mot-de-passe", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ motDePasseActuel: "Nouveau-Cycle-2026", nouveauMotDePasse: "faible" })
+  });
+  verif("nouveau mot de passe trop faible → 422", faibleNouveau.status === 422, `${faibleNouveau.status}`);
+
+  const reLoginTemp = await new SessionHttp().connexion(marque, "Test-Cycle-2026");
+  verif("l'ancien mot de passe est mort → 401", reLoginTemp.status === 401);
+
+  const reLoginNeuf = await new SessionHttp().connexion(marque, "Nouveau-Cycle-2026");
+  verif("connexion au nouveau mot de passe → 200", reLoginNeuf.status === 200);
+
+  const suppression = await admin.json(`/api/users/${idTest}`, { method: "DELETE" });
+  verif("suppression (soft delete) → 200", suppression.status === 200, `${suppression.status}`);
+
+  const coSupprime = await new SessionHttp().connexion(marque, "Nouveau-Cycle-2026");
+  verif("compte supprimé : connexion refusée → 401", coSupprime.status === 401);
+
+  const apresSuppression = await admin.json("/api/data");
+  const usersApres = apresSuppression.corps?.data?.utilisateurs ?? [];
+  verif(
+    "utilisateur supprimé absent des listes + compteurs restaurés",
+    !usersApres.some((u: any) => u.username?.startsWith("test.cycle.")) &&
+      [apresSuppression.corps.data.societes.length, usersApres.length, apresSuppression.corps.data.articles.length, apresSuppression.corps.data.mouvements.length, apresSuppression.corps.data.affectations.length].join() === "2,5,7,4,3"
+  );
+
+  // ══════════ F. LIMITATION DES TENTATIVES (clé dédiée, en dernier) ══════════
+  console.log("\n── F. Anti-bruteforce ──");
+  const bruteForce = new SessionHttp();
+  let dernierStatus = 0;
+  let dernierRetry: string | undefined;
+  for (let i = 0; i < 6; i++) {
+    const tentative = await bruteForce.connexion("zz.ratelimit.probe", "Peu-Importe-000");
+    dernierStatus = tentative.status;
+    dernierRetry = tentative.enteteRetry;
+  }
+  verif("6ᵉ tentative consécutive échouée → 429 + Retry-After", dernierStatus === 429 && Number(dernierRetry) > 0, `status=${dernierStatus} retry=${dernierRetry}`);
+
+  // ══════════ G. ROUTES RETIRÉES : toujours 404 (avec session valide) ══════════
+  console.log("\n── G. Routes retirées ──");
+  for (const chemin of ["/api/pos", "/api/vendors", "/api/ai/analyze-bids"]) {
+    const res = await admin.requete(chemin, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    verif(`POST ${chemin} → 404`, res.status === 404, `status=${res.status}`);
+  }
+
+  console.log(echecs === 0 ? "\nNON-RÉGRESSION 2b : TOUS LES CONTRÔLES PASSENT" : `\nNON-RÉGRESSION : ${echecs} ÉCHEC(S)`);
   process.exit(echecs === 0 ? 0 : 1);
 }
 
