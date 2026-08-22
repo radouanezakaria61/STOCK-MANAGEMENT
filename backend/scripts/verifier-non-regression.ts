@@ -111,6 +111,26 @@ async function main() {
   console.log("── 0. Réinitialisation (seed démonstration) ──");
   execSync("npx prisma db seed", { stdio: "inherit" });
 
+  // Chantier 3.5/C2 : le limiteur anti-bruteforce est désormais PERSISTANT,
+  // il ne se vide plus au redémarrage du serveur. Les échecs volontaires de
+  // cette suite (compte inexistant, compte inactif, sonde ratelimit)
+  // s'accumuleraient donc entre exécutions et déclencheraient le 429 avant
+  // l'heure. On repart d'un état neutre pour ces clés de sonde uniquement —
+  // JAMAIS pour toute la table (elle protège peut-être de vrais coupables).
+  {
+    const dbPurge = new PrismaClient();
+    await dbPurge.tentativeConnexion.deleteMany({
+      where: {
+        OR: [
+          { cle: { endsWith: "|inconnu.nobody" } },
+          { cle: { endsWith: "|mehdi.alami" } },
+          { cle: { endsWith: "|zz.ratelimit.probe" } }
+        ]
+      }
+    });
+    await dbPurge.$disconnect();
+  }
+
   // ══════════ A. SANS SESSION : TOUT EST FERMÉ (critère « Fini quand ») ══════════
   console.log("\n── A. Accès anonymes refusés ──");
   const anon = new SessionHttp();
@@ -278,6 +298,30 @@ async function main() {
     body: JSON.stringify({})
   });
   verif("employé POST /api/stock → 403", refusStock.status === 403 && String(refusStock.corps.error).includes("stock.ecrire"));
+
+  // Chantier 3.5/H1 (audit du 22/08/2026) : l'annuaire des comptes dans
+  // /api/data est masqué sans `utilisateurs.consulter`. L'employé consulte
+  // le parc normalement, mais ne reçoit AUCUN compte ; le détenteur de la
+  // permission (admin) reçoit l'annuaire peuplé.
+  const dataEmploye = await employe.json("/api/data");
+  verif(
+    "employé GET /api/data → 200, parc visible, annuaire utilisateurs VIDE",
+    dataEmploye.status === 200 &&
+      Array.isArray(dataEmploye.corps?.data?.utilisateurs) &&
+      dataEmploye.corps.data.utilisateurs.length === 0 &&
+      dataEmploye.corps.data.articles.length > 0 &&
+      dataEmploye.corps.data.affectations.length > 0,
+    `status=${dataEmploye.status} comptes=${dataEmploye.corps?.data?.utilisateurs?.length}`
+  );
+
+  const dataAdminH1 = await admin.json("/api/data");
+  verif(
+    "admin GET /api/data → annuaire utilisateurs peuplé",
+    dataAdminH1.status === 200 &&
+      Array.isArray(dataAdminH1.corps?.data?.utilisateurs) &&
+      dataAdminH1.corps.data.utilisateurs.length > 0,
+    `comptes=${dataAdminH1.corps?.data?.utilisateurs?.length}`
+  );
 
   const roleInvalide = await admin.json("/api/users", {
     method: "POST",
@@ -835,6 +879,17 @@ async function main() {
   // ══════════ L. GARANTIES EN BASE : AUDIT, IMMUTABILITÉ, CONTRAINTES ══════════
   console.log("\n── L. Base de données (journal, triggers, contraintes) ──");
   const db = new PrismaClient();
+
+  // Chantier 3.5/C2 : l'état du limiteur doit vivre EN BASE (il survit ainsi
+  // aux redémarrages), pas dans une mémoire de process. Les 6 échecs de la
+  // section F sur zz.ratelimit.probe doivent y être visibles, blocage compris.
+  const ligneLimiteur = await db.tentativeConnexion.findFirst({
+    where: { cle: { endsWith: "|zz.ratelimit.probe" } }
+  });
+  verif(
+    "limiteur : état persisté en base (échecs + fenêtre de blocage)",
+    !!ligneLimiteur && ligneLimiteur.echecs >= 5 && ligneLimiteur.bloqueJusqua != null
+  );
 
   const jaCreation = await db.journalAudit.findFirst({
     where: { action: "STOCK_ITEM_CREATED", entiteId: idSousSeuil }

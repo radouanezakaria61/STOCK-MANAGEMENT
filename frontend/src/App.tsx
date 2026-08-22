@@ -166,9 +166,11 @@ export default function App() {
         const payload = await response.json();
         // Clés API en français (AGENTS.md « Langue des clés ») ;
         // les noms internes du frontend sont inchangés.
-        const { societes, utilisateurs: users, articles: stockItems, mouvements: stockMovements, affectations: assignments } = payload.data;
+        // H1 : `utilisateurs` n'est peuplé qu'avec la permission dédiée
+        // (utilisateurs.consulter) — vide sinon, jamais absent.
+        const { societes, articles: stockItems, mouvements: stockMovements, affectations: assignments } = payload.data;
         setSocietes(societes);
-        setUsers(users);
+        setUsers(payload.data.utilisateurs ?? []);
         setStockItems(stockItems);
         setStockMovements(stockMovements);
         setAssignments(assignments);

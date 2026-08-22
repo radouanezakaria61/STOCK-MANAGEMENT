@@ -62,8 +62,10 @@ routerApi.use(verifierOrigine);
 
 // Chantier 3.5 (P1.2) : les consultations sensibles exigent une permission
 // de lecture explicite (anonyme=401, rôle interdit=403, autorisé=200).
-routerApi.get("/data", exigerPermission("parc.consulter"), h(async (_req, res) => {
-  const data = await obtenirDonneesGlobales();
+// H1 : le service masque lui-même l'annuaire utilisateurs sans la permission
+// dédiée — le contrôle ne repose jamais sur le frontend.
+routerApi.get("/data", exigerPermission("parc.consulter"), h(async (req, res) => {
+  const data = await obtenirDonneesGlobales(req.contexteAuth!.permissions);
   res.json({ status: "ok", data });
 }));
 

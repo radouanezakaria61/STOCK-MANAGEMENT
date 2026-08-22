@@ -5,13 +5,22 @@ import { prisma } from "../lib/prisma.js";
 // (02-plan-convergence.md §1.1) : les clés purchaseOrders, budgets et
 // rfqComparisonPools n'existent plus. Depuis le plan v1.2 (chantier 2a),
 // la clé vendors est remplacée par societes.
-export async function obtenirDonneesGlobales() {
+//
+// H1 (audit du 22/08/2026) : l'annuaire des comptes (`utilisateurs`) est une
+// donnée sensible à part — il n'est peuplé QUE pour les détenteurs de la
+// permission dédiée `utilisateurs.consulter` (SUPER_ADMIN, IT_MANAGER,
+// AUDITOR). Un rôle limité au parc (EMPLOYEE…) reçoit la clé vide : le
+// contrat de forme du payload reste stable pour le frontend.
+export async function obtenirDonneesGlobales(permissions: ReadonlySet<string>) {
+  const annuaireAutorise = permissions.has("utilisateurs.consulter");
   const [societes, utilisateurs, articles, mouvements, affectations] = await Promise.all([
     prisma.societe.findMany({ orderBy: { creeLe: "desc" } }),
-    prisma.utilisateur.findMany({
-      orderBy: { creeLe: "desc" },
-      include: { societe: true, role: { select: { code: true, nom: true } } }
-    }),
+    annuaireAutorise
+      ? prisma.utilisateur.findMany({
+          orderBy: { creeLe: "desc" },
+          include: { societe: true, role: { select: { code: true, nom: true } } }
+        })
+      : Promise.resolve([]),
     prisma.articleStock.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.mouvementStock.findMany({ orderBy: { creeLe: "desc" } }),
     prisma.affectation.findMany({
