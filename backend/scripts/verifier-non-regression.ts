@@ -1,8 +1,7 @@
 /**
- * Vérification de non-régression du contrat d'API après le retrait des
- * modules achats (02-plan-convergence.md §1.1, décision du 22/08/2026).
- * Compare GET /api/data aux valeurs attendues du seed parc IT : les clés
- * purchaseOrders, budgets, rfqComparisonPools et les routes gelées n'existent plus.
+ * Vérification de non-régression du contrat d'API après le chantier 2a
+ * (plan v1.2 §3.2) : le module Fournisseurs, le plafond d'engagement et la
+ * matrice de permissions ont disparu ; le référentiel Sociétés est en place.
  */
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
@@ -28,31 +27,31 @@ async function main() {
   verif("enveloppe {status:'ok'}", enveloppe.status === "ok");
   const data = enveloppe.data;
 
-  const { vendors, users, stockItems, stockMovements: movements, assignments } = data as Record<string, any[]>;
+  const { societes, users, stockItems, stockMovements: movements, assignments } = data as Record<string, any[]>;
 
   // ── Compteurs (seed parc IT) ───────────────────────────────────────
-  const compteurs = [vendors?.length, users?.length, stockItems?.length, movements?.length, assignments?.length].join(",");
-  verif("compteurs 5,5,7,4,3", compteurs === "5,5,7,4,3", compteurs);
+  const compteurs = [societes?.length, users?.length, stockItems?.length, movements?.length, assignments?.length].join(",");
+  verif("compteurs 2,5,7,4,3", compteurs === "2,5,7,4,3", compteurs);
 
-  // ── Clés achats absentes ───────────────────────────────────────────
+  // ── Clés retirées absentes ─────────────────────────────────────────
+  verif("clé vendors supprimée", !("vendors" in data));
   verif("clé purchaseOrders supprimée", !("purchaseOrders" in data));
   verif("clé budgets supprimée", !("budgets" in data));
   verif("clé rfqComparisonPools supprimée", !("rfqComparisonPools" in data));
 
   // ── Ordre d'affichage (références) ─────────────────────────────────
-  verif("ordre fournisseurs v-1→v-5", vendors.map((v: any) => v.reference).join() === ["v-1","v-2","v-3","v-4","v-5"].join(), vendors.map((v: any) => v.reference).join());
+  verif("ordre societes soc-1→soc-2", societes.map((s: any) => s.reference).join() === ["soc-1","soc-2"].join(), societes.map((s: any) => s.reference).join());
   verif("ordre utilisateurs usr-1→usr-5", users.map((u: any) => u.reference).join() === ["usr-1","usr-2","usr-3","usr-4","usr-5"].join());
   verif("ordre articles STK-001→STK-007", stockItems.map((s: any) => s.reference).join() === ["STK-001","STK-002","STK-003","STK-004","STK-005","STK-006","STK-007"].join());
   verif("ordre mouvements MVT-001→MVT-004", movements.map((m: any) => m.reference).join() === ["MVT-001","MVT-002","MVT-003","MVT-004"].join());
   verif("ordre affectations 001→003", assignments.map((a: any) => a.reference).join() === ["AFF-DSI-2026-001","AFF-DSI-2026-002","AFF-DSI-2026-003"].join());
 
   // ── Identifiants UUID partout ──────────────────────────────────────
-  const toutesEntites = [...vendors, ...users, ...stockItems, ...movements, ...assignments];
+  const toutesEntites = [...societes, ...users, ...stockItems, ...movements, ...assignments];
   verif("ids = uuid sur toutes les entités", toutesEntites.every((e) => estUuid(e.id)), toutesEntites.filter((e) => !estUuid(e.id)).map((e) => e.reference ?? "?").slice(0, 5).join());
 
   // ── Décimaux → nombres ─────────────────────────────────────────────
   verif("prix unitaires numériques (stock)", stockItems.every((s: any) => typeof s.unitPriceMAD === "number" && typeof s.totalValueMAD === "number"));
-  verif("plafonds numériques (users)", users.every((u: any) => typeof u.spendingLimitMAD === "number"));
 
   // ── Formats de dates (contrat inchangé) ────────────────────────────
   verif("purchaseDate yyyy-MM-dd", stockItems.every((s: any) => estDateSeule(s.purchaseDate)));
@@ -63,24 +62,77 @@ async function main() {
   verif("lastLogin 'YYYY-MM-DD HH:mm'", users.every((u: any) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(u.lastLogin)), JSON.stringify(users.map((u: any) => u.lastLogin)));
 
   // ── Parité métier (échantillon) ────────────────────────────────────
-  const v1 = vendors.find((v: any) => v.reference === "v-1");
-  verif("v-1 Apex / Preferred, sans totalSpend ni activeContracts", v1.name === "Apex Tech & Logistique Maroc" && v1.status === "Preferred" && !("totalSpend" in v1) && !("activeContracts" in v1));
+  const soc1 = societes.find((s: any) => s.reference === "soc-1");
+  verif(
+    "soc-1 Distra SA / DSA active, sans champ fournisseur",
+    soc1.nom === "Distra SA" && soc1.codeCourt === "DSA" && soc1.actif === true && !("qualityScore" in soc1),
+    `${soc1.nom}/${soc1.codeCourt}`
+  );
+
   const stk1 = stockItems.find((s: any) => s.reference === "STK-001");
-  verif("STK-001 qty 15/9/6, prix 14500, sans purchaseOrderId", stk1.quantity === 15 && stk1.availableQty === 9 && stk1.allocatedQty === 6 && stk1.unitPriceMAD === 14500 && !("purchaseOrderId" in stk1));
+  verif(
+    "STK-001 qty 15/9/6, prix 14500, fournisseur texte sans purchaseOrderId",
+    stk1.quantity === 15 && stk1.availableQty === 9 && stk1.allocatedQty === 6 && stk1.unitPriceMAD === 14500 &&
+      typeof stk1.fournisseur === "string" && stk1.fournisseur.length > 0 && !("vendorName" in stk1) && !("purchaseOrderId" in stk1)
+  );
+
   const usr1 = users.find((u: any) => u.reference === "usr-1");
-  verif("usr-1 ADMIN, permissions complètes", usr1.role === "ADMIN" && Object.values(usr1.permissions).every(Boolean));
+  verif(
+    "usr-1 ADMIN rattaché à soc-1, sans plafond ni permissions",
+    usr1.role === "ADMIN" && usr1.societeId === soc1.id &&
+      !("spendingLimitMAD" in usr1) && !("permissions" in usr1) && usr1.societe?.codeCourt === "DSA"
+  );
   verif("usr-1.lastLogin 2026-08-18 13:40", usr1.lastLogin === "2026-08-18 13:40");
+
+  verif(
+    "aucun rôle achats résiduel",
+    users.every((u: any) => ["ADMIN", "AUDITOR", "UTILISATEUR"].includes(u.role)),
+    users.map((u: any) => `${u.reference}:${u.role}`).join()
+  );
 
   // Intégrité FK résolue : mouvement MVT-001 pointe vers le uuid de STK-001
   const mvt1 = movements.find((m: any) => m.reference === "MVT-001");
   verif("MVT-001.stockItemId = uuid de STK-001", mvt1.stockItemId === stk1.id);
 
-  // ── Routes achats retirées ─────────────────────────────────────────
-  for (const route of ["/api/pos", "/api/rfq", "/api/ai/analyze-bids"]) {
+  // ── Routes fournisseurs retirées, route sociétés en place ──────────
+  for (const route of ["/api/pos", "/api/rfq", "/api/ai/analyze-bids", "/api/vendors"]) {
     const r = await fetch(`${BASE}${route}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const texte = await r.text();
     verif(`route retirée POST ${route} → 404`, r.status === 404, `status=${r.status} body=${texte.slice(0, 80)}`);
   }
+
+  const rSoc = await fetch(`${BASE}/api/societes`);
+  const envSoc = await rSoc.json();
+  verif(
+    "GET /api/societes → 200 avec 2 entités",
+    rSoc.status === 200 && envSoc.status === "ok" && Array.isArray(envSoc.data) && envSoc.data.length === 2,
+    `status=${rSoc.status}`
+  );
+  const rStatut = await fetch(`${BASE}/api/societes/${soc1.id}/statut`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actif: false })
+  });
+  const offBody = await rStatut.json();
+  const on = await fetch(`${BASE}/api/societes/${soc1.id}/statut`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actif: true })
+  });
+  const onBody = await on.json();
+  verif(
+    "bascule actif=false → true sur soc-1 OK",
+    rStatut.ok && on.ok && offBody.data?.actif === false && onBody.data?.actif === true,
+    `off=${rStatut.status} on=${on.status}`
+  );
+  await fetch(`${BASE}/api/societes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nom: "", codeCourt: "" })
+  }).then(async (r) => {
+    const b = await r.json();
+    verif("POST /api/societes vide → 400 message français", r.status === 400 && typeof b.error === "string", `status=${r.status}`);
+  });
 
   console.log(echecs === 0 ? "\nNON-RÉGRESSION : TOUS LES CONTRÔLES PASSENT" : `\nNON-RÉGRESSION : ${echecs} ÉCHEC(S)`);
   process.exit(echecs === 0 ? 0 : 1);

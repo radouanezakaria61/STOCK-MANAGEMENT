@@ -1,20 +1,21 @@
 -- CreateTable
-CREATE TABLE "fournisseurs" (
+CREATE TABLE "societes" (
     "id" TEXT NOT NULL,
     "reference" TEXT NOT NULL,
     "nom" TEXT NOT NULL,
-    "contact" TEXT NOT NULL,
-    "email" TEXT NOT NULL,
-    "categorie" TEXT NOT NULL,
-    "score_qualite" INTEGER NOT NULL,
-    "taux_ponctualite" INTEGER NOT NULL,
-    "niveau_risque" TEXT NOT NULL DEFAULT 'Low',
-    "status" TEXT NOT NULL DEFAULT 'Approved',
+    "codeCourt" TEXT NOT NULL,
+    "adresse" TEXT,
+    "ville" TEXT,
+    "telephone" TEXT,
+    "email" TEXT,
+    "identifiant_legal" TEXT,
+    "actif" BOOLEAN NOT NULL DEFAULT true,
+    "notes" TEXT,
     "supprimeLe" TIMESTAMP(3),
     "cree_le" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "modifie_le" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "fournisseurs_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "societes_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -28,8 +29,7 @@ CREATE TABLE "utilisateurs" (
     "fonction" TEXT NOT NULL,
     "role" TEXT NOT NULL,
     "status" TEXT NOT NULL,
-    "plafond_depense_mad" DECIMAL(12,2) NOT NULL DEFAULT 0,
-    "permissions" JSONB NOT NULL,
+    "societe_id" TEXT,
     "url_avatar" TEXT NOT NULL DEFAULT '',
     "derniereConnexion" TIMESTAMP(3),
     "supprimeLe" TIMESTAMP(3),
@@ -57,7 +57,7 @@ CREATE TABLE "articles_stock" (
     "valeur_totale_mad" DECIMAL(12,2) NOT NULL,
     "emplacement" TEXT NOT NULL,
     "status" TEXT NOT NULL,
-    "fournisseur_nom" TEXT,
+    "fournisseur" TEXT,
     "date_achat" TIMESTAMP(3),
     "fin_garantie" TIMESTAMP(3),
     "affecte_a" JSONB,
@@ -169,13 +169,19 @@ CREATE TABLE "retours_affectation" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "fournisseurs_reference_key" ON "fournisseurs"("reference");
+CREATE UNIQUE INDEX "societes_reference_key" ON "societes"("reference");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "societes_codeCourt_key" ON "societes"("codeCourt");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "utilisateurs_reference_key" ON "utilisateurs"("reference");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "utilisateurs_email_key" ON "utilisateurs"("email");
+
+-- CreateIndex
+CREATE INDEX "utilisateurs_societe_id_idx" ON "utilisateurs"("societe_id");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "articles_stock_reference_key" ON "articles_stock"("reference");
@@ -203,6 +209,9 @@ CREATE INDEX "lignes_affectation_affectation_id_idx" ON "lignes_affectation"("af
 
 -- CreateIndex
 CREATE UNIQUE INDEX "retours_affectation_affectation_id_key" ON "retours_affectation"("affectation_id");
+
+-- AddForeignKey
+ALTER TABLE "utilisateurs" ADD CONSTRAINT "utilisateurs_societe_id_fkey" FOREIGN KEY ("societe_id") REFERENCES "societes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "mouvements_stock" ADD CONSTRAINT "mouvements_stock_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "articles_stock"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

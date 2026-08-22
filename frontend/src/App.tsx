@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
-import { Vendor, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "./types";
+import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "./types";
 import DashboardOverview from "./components/DashboardOverview";
-import SuppliersDirectory from "./components/SuppliersDirectory";
+import SocietesManagement from "./components/SocietesManagement";
 import UserManagement from "./components/UserManagement";
 import ITStockManagement from "./components/ITStockManagement";
 import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
 import {
   LayoutDashboard,
-  Users2,
   RefreshCw,
   UserCheck,
   Bell,
@@ -19,7 +18,8 @@ import {
   CheckCircle2,
   Boxes,
   FileCheck2,
-  Calendar
+  Calendar,
+  Building2
 } from "lucide-react";
 
 export default function App() {
@@ -27,7 +27,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // États du parc IT
-  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [societes, setSocietes] = useState<Societe[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -48,12 +48,12 @@ export default function App() {
     },
     {
       id: "notif-2",
-      title: "Nouveau Fournisseur Enregistré",
-      description: "Le fournisseur 'INK SERVICES' a validé l'ensemble de ses documents de conformité.",
+      title: "Référentiel Sociétés à Jour",
+      description: "Les entités du groupe (siège et filiales) sont disponibles pour le rattachement des utilisateurs.",
       timestamp: new Date(Date.now() - 1000 * 60 * 110),
       type: "info",
       unread: false,
-      targetTab: "suppliers"
+      targetTab: "societes"
     }
   ]);
 
@@ -84,8 +84,8 @@ export default function App() {
       const response = await fetch("/api/data");
       if (response.ok) {
         const payload = await response.json();
-        const { vendors, users, stockItems, stockMovements, assignments } = payload.data;
-        setVendors(vendors);
+        const { societes, users, stockItems, stockMovements, assignments } = payload.data;
+        setSocietes(societes);
         setUsers(users);
         setCurrentUser((prev) => prev ?? users[0] ?? null);
         setStockItems(stockItems);
@@ -114,52 +114,6 @@ export default function App() {
     );
   };
 
-  // 2. Mutations POST
-  const handleAddVendor = async (vendorData: any) => {
-    try {
-      const response = await fetch("/api/vendors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(vendorData),
-      });
-      if (response.ok) {
-        await fetchSourcingData();
-        addNotification(
-          "Nouveau Fournisseur Référencé",
-          `L'entreprise "${vendorData.name}" a été intégrée avec succès à l'annuaire.`,
-          "info",
-          "suppliers"
-        );
-      } else {
-        const errorMsg = await response.json();
-        alert(errorMsg.error || "Échec de création du fournisseur.");
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleUpdateVendorRating = async (id: string, updates: any) => {
-    try {
-      const response = await fetch(`/api/vendors/${id}/rating`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (response.ok) {
-        await fetchSourcingData();
-        addNotification(
-          "Profil Fournisseur Mis à Jour",
-          `Les scores de performance et niveau de risque ont été réévalués.`,
-          "info",
-          "suppliers"
-        );
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
       
@@ -183,7 +137,7 @@ export default function App() {
             { id: "dashboard", label: "Tableau de Bord", icon: LayoutDashboard },
             { id: "stock", label: "Stock IT & Matériels", icon: Boxes },
             { id: "assignments", label: "Affectations & Décharges", icon: FileCheck2 },
-            { id: "suppliers", label: "Annuaire Fournisseurs", icon: Users2 },
+            { id: "societes", label: "Sociétés", icon: Building2 },
             { id: "users", label: "Utilisateurs & Rôles", icon: Shield },
           ].map((tab) => {
             const IconComp = tab.icon;
@@ -210,6 +164,11 @@ export default function App() {
                 {tab.id === "assignments" && assignments.length > 0 && (
                   <span className="text-[10px] bg-slate-800 text-indigo-300 px-1.5 py-0.2 rounded-md font-bold">
                     {assignments.filter(a => a.status === "Active").length}
+                  </span>
+                )}
+                {tab.id === "societes" && societes.length > 0 && (
+                  <span className="text-[10px] bg-slate-800 text-emerald-300 px-1.5 py-0.2 rounded-md font-bold">
+                    {societes.length}
                   </span>
                 )}
                 {tab.id === "users" && users.length > 0 && (
@@ -253,7 +212,7 @@ export default function App() {
                   dashboard: "Vue d'Ensemble du Parc Informatique",
                   stock: "Gestion du Stock IT, Actifs & Dotations Collaborateurs",
                   assignments: "Affectations, Décharges & Restitutions de Matériel (DSI)",
-                  suppliers: "Répertoire & Évaluation des Fournisseurs Partenaires",
+                  societes: "Référentiel des Sociétés du Groupe",
                   users: "Gestion des Utilisateurs, Rôles & Habilitations (RBAC)",
                 }[activeTab]
               }
@@ -288,11 +247,9 @@ export default function App() {
                         className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded ${
                           currentUser.role === "ADMIN"
                             ? "bg-purple-100 text-purple-800"
-                            : currentUser.role === "PROCUREMENT_MANAGER"
-                            ? "bg-indigo-100 text-indigo-800"
-                            : currentUser.role === "BUYER"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-sky-100 text-sky-800"
+                            : currentUser.role === "AUDITOR"
+                            ? "bg-sky-100 text-sky-800"
+                            : "bg-emerald-100 text-emerald-800"
                         }`}
                       >
                         {currentUser.role}
@@ -310,11 +267,9 @@ export default function App() {
                       <p className="text-xs font-black text-slate-900 mt-0.5">{currentUser.name}</p>
                       <p className="text-[11px] text-slate-500">{currentUser.jobTitle}</p>
                       <div className="mt-2 pt-2 border-t border-purple-100 flex items-center justify-between text-[10.5px]">
-                        <span className="text-slate-500">Plafond engagé :</span>
+                        <span className="text-slate-500">Société :</span>
                         <strong className="text-purple-900 font-bold">
-                          {currentUser.spendingLimitMAD > 0
-                            ? `${currentUser.spendingLimitMAD.toLocaleString()} MAD`
-                            : "Sans autorisation"}
+                          {currentUser.societe ? currentUser.societe.nom : "Non rattaché"}
                         </strong>
                       </div>
                     </div>
@@ -511,7 +466,6 @@ export default function App() {
             <div className="space-y-6">
               {activeTab === "dashboard" && (
                 <DashboardOverview
-                  vendors={vendors}
                   users={users}
                   stockItems={stockItems}
                   stockMovements={stockMovements}
@@ -538,20 +492,22 @@ export default function App() {
                   onSelectTab={setActiveTab}
                 />
               )}
-              {activeTab === "suppliers" && (
-                <SuppliersDirectory
-                  vendors={vendors}
+              {activeTab === "societes" && (
+                <SocietesManagement
+                  societes={societes}
                   currentUser={currentUser}
-                  onAddVendor={handleAddVendor}
-                  onUpdateVendorRating={handleUpdateVendorRating}
+                  onRefresh={fetchSourcingData}
+                  addNotification={addNotification}
                 />
               )}
               {activeTab === "users" && (
                 <UserManagement
                   users={users}
+                  societes={societes}
                   currentUser={currentUser}
                   onUpdateUsers={setUsers}
                   onSwitchUser={handleSwitchUser}
+                  onRefresh={fetchSourcingData}
                 />
               )}
             </div>

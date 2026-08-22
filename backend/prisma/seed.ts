@@ -2,7 +2,7 @@
  * Seed — données de démonstration parc IT.
  *
  * Identifiants : PK = UUID générés ; `reference` porte l'identifiant métier
- * lisible (v-1, usr-1, STK-001…). Les clés étrangères sont résolues via une
+ * lisible (soc-1, usr-1, STK-001…). Les clés étrangères sont résolues via une
  * map référence → uuid.
  *
  * Ordre d'insertion inversé : `creeLe` étant horodaté à l'insertion (compteur
@@ -34,72 +34,41 @@ async function main() {
   await prisma.mouvementStock.deleteMany();
   await prisma.articleStock.deleteMany();
   await prisma.utilisateur.deleteMany();
-  await prisma.fournisseur.deleteMany();
+  await prisma.societe.deleteMany();
 
   const idArticle = new Map<string, string>();
+  const idSociete = new Map<string, string>();
 
-  // ── Fournisseurs (insertion inversée : v-5 d'abord → affiché en dernier) ──
-  const fournisseurs = [
+  // ── Sociétés (insertion inversée : soc-2 d'abord → affichée en dernier) ──
+  const societes = [
     {
-      reference: "v-5",
-      name: "Summit Transport & Logistique",
-      contact: "Mehdi Alami",
-      email: "operations@summitlog.ma",
-      category: "Transport & Logistique",
-      qualityScore: 71,
-      onTimeDelivery: 74,
-      riskLevel: "High",
-      status: "On Probation"
+      reference: "soc-2",
+      nom: "Distra Services Régionaux",
+      codeCourt: "DSR",
+      adresse: "Zone Industrielle Oued Sekrane, Lot 42",
+      ville: "Berrechid",
+      telephone: "+212 5 22 33 09 20",
+      email: "contact.sud@distra.ma",
+      identifiantLegal: "002345678000031",
+      notes: "Filiale régionale — site industriel de Berrechid."
     },
     {
-      reference: "v-4",
-      name: "Vertex Conseil & Solutions",
-      contact: "Kenza Mansouri",
-      email: "contrats@vertexconseil.ma",
-      category: "Services & Conseil",
-      qualityScore: 82,
-      onTimeDelivery: 85,
-      riskLevel: "Medium",
-      status: "Approved"
-    },
-    {
-      reference: "v-3",
-      name: "Vanguard Cybersécurité Maroc",
-      contact: "Driss Tazi",
-      email: "projets@vanguardcyber.ma",
-      category: "Cybersécurité & Réseaux",
-      qualityScore: 98,
-      onTimeDelivery: 99,
-      riskLevel: "Low",
-      status: "Preferred"
-    },
-    {
-      reference: "v-2",
-      name: "BlueSky Fournitures & Bureau",
-      contact: "Youssef El Amrani",
-      email: "commandes@bluesky.ma",
-      category: "Fournitures de Bureau",
-      qualityScore: 88,
-      onTimeDelivery: 91,
-      riskLevel: "Low",
-      status: "Approved"
-    },
-    {
-      reference: "v-1",
-      name: "Apex Tech & Logistique Maroc",
-      contact: "Sarah Benali",
-      email: "contact@apextech.ma",
-      category: "Équipements Informatiques",
-      qualityScore: 94,
-      onTimeDelivery: 96,
-      riskLevel: "Low",
-      status: "Preferred"
+      reference: "soc-1",
+      nom: "Distra SA",
+      codeCourt: "DSA",
+      adresse: "45 Boulevard Zerktouni, 5e étage",
+      ville: "Casablanca",
+      telephone: "+212 5 22 48 90 10",
+      email: "contact@distra.ma",
+      identifiantLegal: "001234567000045",
+      notes: "Siège social — maison mère du groupe."
     }
   ];
-  for (const f of fournisseurs) {
-    await prisma.fournisseur.create({
-      data: { ...f, id: randomUUID(), creeLe: horodatage() }
+  for (const s of societes) {
+    const cree = await prisma.societe.create({
+      data: { ...s, id: randomUUID(), creeLe: horodatage() }
     });
+    idSociete.set(cree.reference, cree.id);
   }
 
   // ── Utilisateurs (insertion inversée : usr-5 → usr-1) ────────────────
@@ -111,18 +80,9 @@ async function main() {
       phone: "+212 6 65 67 89 01",
       department: "Chaîne Logistique & Approvisionnements",
       jobTitle: "Responsable Approvisionnements & Flotte",
-      role: "BUYER",
+      role: "UTILISATEUR",
       status: "Inactif",
-      spendingLimitMAD: 30000,
-      permissions: {
-        canCreatePO: true,
-        canApprovePO: false,
-        canManageVendors: false,
-        canEvaluateBids: false,
-        canGenerateContracts: false,
-        canManageUsers: false,
-        canViewBudgets: true
-      },
+      societeRef: "soc-2",
       avatarUrl: "",
       derniereConnexion: new Date("2026-07-25T14:20:00Z")
     },
@@ -135,16 +95,7 @@ async function main() {
       jobTitle: "Contrôleur Financier & Auditeur Interne",
       role: "AUDITOR",
       status: "Actif",
-      spendingLimitMAD: 0,
-      permissions: {
-        canCreatePO: false,
-        canApprovePO: false,
-        canManageVendors: false,
-        canEvaluateBids: false,
-        canGenerateContracts: false,
-        canManageUsers: false,
-        canViewBudgets: true
-      },
+      societeRef: "soc-1",
       avatarUrl: "",
       derniereConnexion: new Date("2026-08-18T09:05:00Z")
     },
@@ -154,19 +105,10 @@ async function main() {
       email: "karim.berrada@entreprise.ma",
       phone: "+212 6 63 45 67 89",
       department: "Ventes & Marketing",
-      jobTitle: "Acheteur Senior & Commercial",
-      role: "BUYER",
+      jobTitle: "Responsable Commercial",
+      role: "UTILISATEUR",
       status: "Actif",
-      spendingLimitMAD: 50000,
-      permissions: {
-        canCreatePO: true,
-        canApprovePO: false,
-        canManageVendors: false,
-        canEvaluateBids: true,
-        canGenerateContracts: false,
-        canManageUsers: false,
-        canViewBudgets: true
-      },
+      societeRef: "soc-2",
       avatarUrl: "",
       derniereConnexion: new Date("2026-08-17T16:30:00Z")
     },
@@ -176,19 +118,10 @@ async function main() {
       email: "maya.lin@entreprise.ma",
       phone: "+212 6 62 34 56 78",
       department: "Ressources Humaines & Moyens Généraux",
-      jobTitle: "Directrice des Achats & Moyens Généraux",
-      role: "PROCUREMENT_MANAGER",
+      jobTitle: "Directrice des Moyens Généraux",
+      role: "UTILISATEUR",
       status: "Actif",
-      spendingLimitMAD: 300000,
-      permissions: {
-        canCreatePO: true,
-        canApprovePO: true,
-        canManageVendors: true,
-        canEvaluateBids: true,
-        canGenerateContracts: true,
-        canManageUsers: false,
-        canViewBudgets: true
-      },
+      societeRef: "soc-1",
       avatarUrl: "",
       derniereConnexion: new Date("2026-08-18T11:15:00Z")
     },
@@ -201,22 +134,16 @@ async function main() {
       jobTitle: "Directeur des Systèmes d'Information (DSI)",
       role: "ADMIN",
       status: "Actif",
-      spendingLimitMAD: 1000000,
-      permissions: {
-        canCreatePO: true,
-        canApprovePO: true,
-        canManageVendors: true,
-        canEvaluateBids: true,
-        canGenerateContracts: true,
-        canManageUsers: true,
-        canViewBudgets: true
-      },
+      societeRef: "soc-1",
       avatarUrl: "",
       derniereConnexion: new Date("2026-08-18T13:40:00Z")
     }
   ];
   for (const u of utilisateurs) {
-    await prisma.utilisateur.create({ data: { ...u, id: randomUUID(), creeLe: horodatage() } });
+    const { societeRef, ...donnees } = u;
+    await prisma.utilisateur.create({
+      data: { ...donnees, id: randomUUID(), societeId: idSociete.get(societeRef)!, creeLe: horodatage() }
+    });
   }
 
   // ── Articles en stock (insertion inversée : STK-007 → STK-001) ───────
@@ -237,7 +164,7 @@ async function main() {
       totalValueMAD: 3400,
       location: "Réserve Consommables",
       status: "En Stock",
-      vendorName: "BlueSky Fournitures & Bureau",
+      fournisseur: "BlueSky Fournitures & Bureau",
       purchaseDate: dateSeule("2026-05-20"),
       warrantyExpiry: null,
       assignedTo: undefined,
@@ -259,7 +186,7 @@ async function main() {
       totalValueMAD: 36000,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      vendorName: "Apex Tech & Logistique Maroc",
+      fournisseur: "Apex Tech & Logistique Maroc",
       purchaseDate: dateSeule("2026-06-08"),
       warrantyExpiry: dateSeule("2028-06-08"),
       assignedTo: undefined,
@@ -281,7 +208,7 @@ async function main() {
       totalValueMAD: 98000,
       location: "Local Technique Réseau",
       status: "En Stock",
-      vendorName: "Vanguard Cybersécurité Maroc",
+      fournisseur: "Vanguard Cybersécurité Maroc",
       purchaseDate: dateSeule("2026-05-02"),
       warrantyExpiry: dateSeule("2029-05-02"),
       assignedTo: undefined,
@@ -303,7 +230,7 @@ async function main() {
       totalValueMAD: 234000,
       location: "Salle Serveurs Datacenter (Baie B2)",
       status: "En Stock",
-      vendorName: "Apex Tech & Logistique Maroc",
+      fournisseur: "Apex Tech & Logistique Maroc",
       purchaseDate: dateSeule("2026-04-20"),
       warrantyExpiry: dateSeule("2031-04-20"),
       assignedTo: undefined,
@@ -325,7 +252,7 @@ async function main() {
       totalValueMAD: 120000,
       location: "Stock IT Étage 3",
       status: "En Stock",
-      vendorName: "Apex Tech & Logistique Maroc",
+      fournisseur: "Apex Tech & Logistique Maroc",
       purchaseDate: dateSeule("2026-05-15"),
       warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: undefined,
@@ -347,7 +274,7 @@ async function main() {
       totalValueMAD: 110400,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      vendorName: "Apex Tech & Logistique Maroc",
+      fournisseur: "Apex Tech & Logistique Maroc",
       purchaseDate: dateSeule("2026-05-15"),
       warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: {
@@ -373,7 +300,7 @@ async function main() {
       totalValueMAD: 217500,
       location: "Magasin Central IT (Casablanca)",
       status: "En Stock",
-      vendorName: "Apex Tech & Logistique Maroc",
+      fournisseur: "Apex Tech & Logistique Maroc",
       purchaseDate: dateSeule("2026-05-15"),
       warrantyExpiry: dateSeule("2029-05-15"),
       assignedTo: {
@@ -605,7 +532,7 @@ async function main() {
   });
 
   const counts = {
-    fournisseurs: await prisma.fournisseur.count(),
+    societes: await prisma.societe.count(),
     utilisateurs: await prisma.utilisateur.count(),
     articlesStock: await prisma.articleStock.count(),
     mouvements: await prisma.mouvementStock.count(),

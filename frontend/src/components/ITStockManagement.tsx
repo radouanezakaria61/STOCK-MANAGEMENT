@@ -72,7 +72,7 @@ export default function ITStockManagement({
     unitPriceMAD: 0,
     location: "Magasin Central IT (Casablanca)",
     status: "En Stock" as StockStatus,
-    vendorName: "",
+    fournisseur: "",
     notes: ""
   });
 
@@ -102,7 +102,7 @@ export default function ITStockManagement({
       item.assetTag.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.serialNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (item.assignedTo?.userName && item.assignedTo.userName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (item.vendorName && item.vendorName.toLowerCase().includes(searchQuery.toLowerCase()));
+      (item.fournisseur && item.fournisseur.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesCategory = categoryFilter === "ALL" || item.category === categoryFilter;
     const matchesStatus = statusFilter === "ALL" || item.status === statusFilter;
@@ -151,7 +151,7 @@ export default function ITStockManagement({
           unitPriceMAD: 0,
           location: "Magasin Central IT (Casablanca)",
           status: "En Stock",
-          vendorName: "",
+          fournisseur: "",
           notes: ""
         });
         onRefresh();
@@ -415,9 +415,9 @@ export default function ITStockManagement({
                           <div className="text-[10.5px] text-slate-400 flex items-center gap-1.5 mt-0.5">
                             <span className="font-semibold text-slate-600">{item.brand}</span>
                             {item.model && <span>• {item.model}</span>}
-                            {item.vendorName && (
+                            {item.fournisseur && (
                               <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[9.5px]">
-                                {item.vendorName}
+                                {item.fournisseur}
                               </span>
                             )}
                           </div>

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Vendor, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "../types";
+import { AppUser, ITStockItem, StockMovement, MaterialAssignment } from "../types";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { 
   TrendingUp, 
@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 
 interface DashboardOverviewProps {
-  vendors: Vendor[];
   users: AppUser[];
   stockItems: ITStockItem[];
   stockMovements: StockMovement[];
@@ -27,7 +26,6 @@ interface DashboardOverviewProps {
 }
 
 export default function DashboardOverview({
-  vendors,
   users,
   stockItems,
   stockMovements,
@@ -52,9 +50,9 @@ export default function DashboardOverview({
 
   const quantiteTotale = stockItems.reduce((sum, i) => sum + i.quantity, 0);
 
-  const fournisseursARisque = vendors.filter(
-    (v) => v.riskLevel === "High" || v.status === "On Probation"
-  );
+  const unitesDisponibles = stockItems.reduce((sum, i) => sum + i.availableQty, 0);
+
+  const materielsEnMaintenance = stockItems.filter((i) => i.status === "En Maintenance");
 
   // Graphique : volume mensuel des mouvements de matériel
   const mouvementsMap: { [key: string]: number } = {};
@@ -93,8 +91,8 @@ export default function DashboardOverview({
     },
     affectationsCount: { FR: "Affectations en cours", EN: "Active assignments" },
     affectationsDesc: { FR: "Dotations matériel actives à suivre", EN: "Active equipment assignments to track" },
-    fournisseursCount: { FR: "Fournisseurs à risque", EN: "At-risk vendors" },
-    fournisseursDesc: { FR: "Profils à surveiller ou en période d'essai", EN: "Vendors on probation or flagged" },
+    maintenanceCount: { FR: "Matériels en maintenance", EN: "Hardware in repair" },
+    maintenanceDesc: { FR: "Équipements immobilisés chez le réparateur", EN: "Equipment held by the repair shop" },
     viewBtn: { FR: "Voir", EN: "Inspect" },
     articlesTotal: { FR: "ARTICLES RÉFÉRENCÉS", EN: "REGISTERED ITEMS" },
     unitesEnStock: { FR: "unités en stock", EN: "units in stock" },
@@ -112,7 +110,7 @@ export default function DashboardOverview({
     statsHeader: { FR: "INDICATEURS CLÉS DU PARC", EN: "IT ASSET SCORECARD" },
     tauxAffectation: { FR: "Taux d'affectation", EN: "Allocation Rate" },
     articlesCritiques: { FR: "Articles critiques", EN: "Critical items" },
-    scoreFournisseurs: { FR: "Score fournisseurs", EN: "Vendor Score" },
+    unitesDisponibles: { FR: "Unités disponibles", EN: "Available Units" },
     repartitionCategorie: { FR: "Valeur du stock par catégorie (MAD)", EN: "Stock Value by Category (MAD)" },
     noData: { FR: "Aucun mouvement enregistré", EN: "No movement recorded yet" }
   };
@@ -122,11 +120,6 @@ export default function DashboardOverview({
       ? Math.round(
           (stockItems.reduce((sum, i) => sum + i.allocatedQty, 0) / quantiteTotale) * 100
         )
-      : 0;
-
-  const scoreMoyenFournisseurs =
-    vendors.length > 0
-      ? Math.round(vendors.reduce((sum, v) => sum + v.qualityScore, 0) / vendors.length)
       : 0;
 
   return (
@@ -191,7 +184,7 @@ export default function DashboardOverview({
             </span>
           </div>
           <span className="text-xs text-amber-700 font-bold bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
-            {(articlesSousSeuil.length > 0 ? 1 : 0) + (affectationsActives.length > 0 ? 1 : 0) + (fournisseursARisque.length > 0 ? 1 : 0)} {translate.priorityActions[lang]}
+            {(articlesSousSeuil.length > 0 ? 1 : 0) + (affectationsActives.length > 0 ? 1 : 0) + (materielsEnMaintenance.length > 0 ? 1 : 0)} {translate.priorityActions[lang]}
           </span>
         </div>
 
@@ -239,20 +232,20 @@ export default function DashboardOverview({
             </div>
           </div>
 
-          {/* Carte 3 : Fournisseurs à risque */}
+          {/* Carte 3 : Matériels en maintenance */}
           <div className="bg-slate-50/40 rounded-xl border border-slate-200/60 p-3.5 flex items-start gap-4 hover:bg-slate-50 transition">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200/50 shrink-0">
               <PackageCheck size={16} />
             </div>
             <div className="space-y-1">
               <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 leading-none">
-                <span className="text-emerald-600 font-black">{fournisseursARisque.length}</span> {translate.fournisseursCount[lang]}
+                <span className="text-emerald-600 font-black">{materielsEnMaintenance.length}</span> {translate.maintenanceCount[lang]}
               </h3>
               <p className="text-[11px] text-slate-500 leading-snug">
-                {translate.fournisseursDesc[lang]}
+                {translate.maintenanceDesc[lang]}
               </p>
-              <button 
-                onClick={() => onSelectTab("suppliers")}
+              <button
+                onClick={() => onSelectTab("stock")}
                 className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-0.5 pt-1.5 transition cursor-pointer"
               >
                 {translate.viewBtn[lang]} <ArrowRight size={10} />
@@ -337,7 +330,7 @@ export default function DashboardOverview({
               {repartitionCategories.length} catégories
             </span>
             <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-100">
-              {vendors.length} fournisseurs
+              {unitesDisponibles} unités disponibles
             </span>
           </div>
         </div>
@@ -516,8 +509,8 @@ export default function DashboardOverview({
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-600">
-                <span className="text-slate-400 font-extrabold">{translate.scoreFournisseurs[lang]} :</span>
-                <span className="text-indigo-700 font-black" id="vendor-score-stat">{scoreMoyenFournisseurs}/100</span>
+                <span className="text-slate-400 font-extrabold">{translate.unitesDisponibles[lang]} :</span>
+                <span className="text-indigo-700 font-black" id="available-units-stat">{unitesDisponibles}</span>
               </div>
             </div>
           </div>

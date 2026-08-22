@@ -13,9 +13,15 @@
 //
 // Décision du 22/08/2026 (plan §1.1) : les modules achats sont supprimés.
 // Les modèles BonCommande, LigneCommande, Budget, AppelOffres et Offre ont
-// été retirés du schéma ; Fournisseur est conservé pour le parc IT
-// (équipements, licences, maintenance) — ses champs alimentés par les
-// commandes (totalSpend, activeContracts) ont disparu avec leur source.
+// été retirés du schéma.
+//
+// Décision du plan v1.2 §3.2 (chantier 2a) : le modèle Fournisseur est lui
+// aussi retiré. La provenance survit sous forme d'un simple champ texte
+// `fournisseur` sur ArticleStock (puis Equipement/Licence/Maintenance plus
+// tard). Ne recrée pas de table Fournisseur. Le plafond d'engagement et la
+// matrice de permissions de Utilisateur disparaissent avec le module achats ;
+// le nouveau modèle Societe sert d'étiquette de rattachement (filtres),
+// pas de cloisonnement des données.
 
 generator client {
   provider = "prisma-client-js"
@@ -26,24 +32,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ───────────────────────────── FOURNISSEURS ───────────────────────────
+// ───────────────────────────── SOCIÉTÉS ───────────────────────────────
 
-model Fournisseur {
-  id             String  @id @default(uuid())
-  reference      String  @unique
-  name           String  @map("nom")
-  contact        String
-  email          String
-  category       String  @map("categorie")
-  qualityScore   Int     @map("score_qualite")
-  onTimeDelivery Int     @map("taux_ponctualite")
-  riskLevel      String  @default("Low") @map("niveau_risque")
-  status         String  @default("Approved")
-  supprimeLe     DateTime?
-  creeLe         DateTime @default(now()) @map("cree_le")
-  modifieLe      DateTime @updatedAt @map("modifie_le")
+// Étiquette de rattachement (plan v1.2 §3.2) : tout le monde voit tout, les
+// listes se filtrent par société. Pas de suppression physique — une société
+// fermée est désactivée (actif = false) ou soft-deletée (supprimeLe).
+model Societe {
+  id              String    @id @default(uuid())
+  reference       String    @unique
+  nom             String
+  codeCourt       String    @unique
+  adresse         String?
+  ville           String?
+  telephone       String?
+  email           String?
+  identifiantLegal String?  @map("identifiant_legal") // ICE
+  actif           Boolean   @default(true)
+  notes           String?
+  supprimeLe      DateTime?
+  creeLe          DateTime  @default(now()) @map("cree_le")
+  modifieLe       DateTime  @updatedAt @map("modifie_le")
 
-  @@map("fournisseurs")
+  utilisateurs Utilisateur[]
+
+  @@map("societes")
 }
 
 // ──────────────────────────── UTILISATEURS ────────────────────────────
@@ -58,14 +70,17 @@ model Utilisateur {
   jobTitle          String   @map("fonction")
   role              String
   status            String
-  spendingLimitMAD  Decimal  @default(0) @db.Decimal(12, 2) @map("plafond_depense_mad")
-  permissions       Json
+  societeId         String?  @map("societe_id")
   avatarUrl         String   @default("") @map("url_avatar")
   derniereConnexion DateTime?
   supprimeLe        DateTime?
   creeLe            DateTime @default(now()) @map("cree_le")
   modifieLe         DateTime @updatedAt @map("modifie_le")
 
+  // Restrict : impossible de supprimer physiquement une société qui a des comptes.
+  societe Societe? @relation(fields: [societeId], references: [id], onDelete: Restrict)
+
+  @@index([societeId])
   @@map("utilisateurs")
 }
 
@@ -88,8 +103,9 @@ model ArticleStock {
   totalValueMAD  Decimal   @db.Decimal(12, 2) @map("valeur_totale_mad")
   location       String    @map("emplacement")
   status         String
-  // Provenance saisie manuellement jusqu'à l'écran « Réception » (chantier 7)
-  vendorName     String?   @map("fournisseur_nom")
+  // Provenance saisie manuellement (champ texte libre, plan v1.2 §3.2 —
+  // plus de table Fournisseur)
+  fournisseur    String?
   purchaseDate   DateTime? @map("date_achat")
   warrantyExpiry DateTime? @map("fin_garantie")
   assignedTo     Json?     @map("affecte_a")

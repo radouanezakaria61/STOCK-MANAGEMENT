@@ -1,25 +1,26 @@
-export interface Vendor {
+export interface Societe {
   id: string;
-  name: string;
-  contact: string;
-  email: string;
-  category: string;
-  qualityScore: number;
-  onTimeDelivery: number;
-  riskLevel: "Low" | "Medium" | "High";
-  status: "Preferred" | "Approved" | "On Probation";
+  reference: string;
+  nom: string;
+  codeCourt: string;
+  adresse?: string | null;
+  ville?: string | null;
+  telephone?: string | null;
+  email?: string | null;
+  identifiantLegal?: string | null; // ICE
+  actif: boolean;
+  notes?: string | null;
+  createdAt: string;
 }
 
-export type UserRole = "ADMIN" | "PROCUREMENT_MANAGER" | "BUYER" | "AUDITOR";
+export type UserRole = "ADMIN" | "AUDITOR" | "UTILISATEUR";
 
-export interface UserPermissions {
-  canCreatePO: boolean;
-  canApprovePO: boolean;
-  canManageVendors: boolean;
-  canEvaluateBids: boolean;
-  canGenerateContracts: boolean;
-  canManageUsers: boolean;
-  canViewBudgets: boolean;
+export interface SocieteRef {
+  id: string;
+  reference: string;
+  nom: string;
+  codeCourt: string;
+  actif: boolean;
 }
 
 export interface AppUser {
@@ -31,8 +32,8 @@ export interface AppUser {
   jobTitle: string;
   role: UserRole;
   status: "Actif" | "Inactif" | "Suspendu";
-  spendingLimitMAD: number; // 0 means no limit or strictly no approval right
-  permissions: UserPermissions;
+  societeId?: string | null;
+  societe?: SocieteRef | null;
   avatarUrl?: string;
   createdAt: string;
   lastLogin?: string;
@@ -83,7 +84,7 @@ export interface ITStockItem {
   totalValueMAD: number;
   location: string;
   status: StockStatus;
-  vendorName?: string;
+  fournisseur?: string | null;
   purchaseDate?: string;
   assignedTo?: StockAssignment;
   warrantyExpiry?: string;

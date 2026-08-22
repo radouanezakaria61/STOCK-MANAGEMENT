@@ -81,9 +81,15 @@ Les modules **achats** — `BonCommande`, `LigneCommande`, `Budget`, `AppelOffre
 - Ne recrée pas de notion de commande, de budget ou d'appel d'offres.
 - Si un besoin d'achat réapparaît, il fait l'objet d'une décision explicite, pas d'un ajout opportuniste.
 
-`Fournisseur` est **conservé** : le parc IT en a besoin pour les équipements, les licences et la maintenance.
+Le module **Fournisseurs** a lui aussi été supprimé (décision du 22 août). L'information fournisseur survit sous forme d'un **champ texte `fournisseur`** sur `Equipement`, `Licence` et `Maintenance` — assez pour faire jouer une garantie ou rappeler un réparateur, sans module à maintenir. Ne recrée pas de table `Fournisseur`.
 
-L'entrée en stock se fait désormais par l'écran « Réception » prévu au chantier 7, et manuellement en attendant.
+L'entrée en stock se fait par l'écran « Réception » prévu au chantier 7, et manuellement en attendant.
+
+## Modèle de rattachement — deux décisions structurantes
+
+**Le matériel s'affecte à un `Employe`, jamais à un `Utilisateur`.** Un `Employe` est une personne physique (matricule, département, société) qui n'a pas besoin de compte : dans un parc IT, la plupart des porteurs de matériel ne se connectent jamais à l'application. Un `Utilisateur` est un compte de connexion, éventuellement relié à un employé par `employeId`.
+
+**`Societe` est une étiquette avec filtres, pas un cloisonnement.** Utilisateurs, employés et équipements portent un `societeId` ; tout le monde voit tout, les listes se filtrent par société. Le filtrage passe par la couche service, ce qui laisse la porte ouverte à un cloisonnement strict plus tard sans réécrire les écrans. N'introduis pas de filtrage implicite par société tant que la décision n'a pas changé.
 
 ## Avant de dire qu'un chantier est terminé
 

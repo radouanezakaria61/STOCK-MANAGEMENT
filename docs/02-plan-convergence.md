@@ -1,7 +1,7 @@
 # IT Stock Manager — Plan de convergence
 
 > Comment faire converger le code restructuré (Express + Prisma + PostgreSQL) vers l'architecture validée en Phase 1, avec un périmètre recentré sur la **gestion de parc IT**.
-> Version 1.1 — 22 août 2026 · §1.1 révisée : suppression des modules achats au lieu du gel · Fait suite au `RESTRUCTURE-REPORT.md` du 22 août 2026 et au document `01-architecture.md`.
+> Version 1.2 — 22 août 2026 · v1.1 : suppression des modules achats · v1.2 : suppression du module Fournisseurs, ajout de `Societe`, chantier 2 scindé en 2a/2b, critères d'acceptation des chantiers 5-6 (§4.5) · Fait suite au `RESTRUCTURE-REPORT.md` du 22 août 2026 et au document `01-architecture.md`.
 
 ---
 
@@ -42,7 +42,7 @@ Autrement dit : la restructuration a produit une bonne fondation technique (couc
 | `Budget` | **Supprimé** | Hors périmètre |
 | `AppelOffres` + `Offre` | **Supprimé** | Hors périmètre |
 | `ia.service.ts` + client Gemini | **Supprimé** | Ne servait que l'analyse d'offres |
-| `Fournisseur` | **Conservé et étendu** | **Requis par le parc IT** : équipements, licences, maintenance. Ne pas le supprimer avec le reste |
+| `Fournisseur` | **Supprimé** (décision du 22 août, v1.2) | Le module disparaît. L'information est conservée sous forme d'un **champ texte `fournisseur`** sur `Equipement`, `Licence` et `Maintenance` — suffisant pour faire jouer une garantie ou rappeler un réparateur |
 | `Utilisateur` | **Refondu** | Socle de l'authentification et du RBAC |
 | `ArticleStock` | **Scindé** | Voir §2.2 |
 | `MouvementStock` | **Étendu** | FK, types complets, statut avant/après |
@@ -146,11 +146,12 @@ Je propose donc de **garder les deux**, correctement nommés :
 
 Le contrat d'API existant (`POST /api/assignments`, `/assignments/:id/return`) est **conservé** : il crée un `BonAffectation` et, en cascade, les `Affectation` correspondantes dans la même transaction. Le frontend actuel continue de fonctionner.
 
-### 2.4 Les 22 modèles à créer
+### 2.4 Les 23 modèles à créer
 
 | Bloc | Modèles | Chantier |
 |---|---|---|
-| Sécurité | `Role`, `Permission`, `RolePermission`, `Session` | 2 |
+| Organisation | `Societe` | 2a |
+| Sécurité | `Role`, `Permission`, `RolePermission`, `Session` | 2b |
 | Audit & notifications | `JournalAudit`, `Notification` | 3 |
 | Référentiels | `Categorie`, `Marque`, `Modele`, `Localisation`, `Departement` | 4 |
 | Personnes | `Employe` | 4 |
@@ -302,18 +303,35 @@ Deux extensions Prisma globales sont posées ici : filtrage automatique de `supp
 
 **Risque principal :** la sérialisation `Decimal`. À vérifier écran par écran sur le frontend — c'est le seul endroit où ce chantier peut casser quelque chose de visible.
 
-#### Chantier 2 — Authentification et RBAC · effort : M
+#### Chantier 2a — Nettoyage fonctionnel et module Sociétés · effort : M
+
+Regroupe les points 1 à 4 et 12 de la demande du 22 août. Aucune authentification à ce stade : on nettoie et on ajoute la dimension société, pour que le chantier 2b n'ait à permissionner qu'un périmètre déjà stabilisé.
+
+- **Suppression du module Fournisseurs** : écrans, menus, routes, service, modèle Prisma, types frontend, permissions associées. Remplacé par un champ texte `fournisseur` sur les entités qui en ont besoin (`ArticleStock` aujourd'hui, `Equipement`, `Licence` et `Maintenance` plus tard)
+- **Suppression du plafond d'engagement** sur `Utilisateur` : champ, validations, DTO, endpoints, règles métier, colonne
+- **Nettoyage des rôles et permissions résiduels** : `PROCUREMENT_MANAGER`, drapeaux achats de `UserManagement.tsx`, validations RAF / DAF / DGA / PDG, permissions orphelines. Tout ce qui n'a plus de module derrière disparaît
+- **Modèle `Societe`** : `id`, `reference`, `nom`, `codeCourt`, `adresse?`, `ville?`, `telephone?`, `email?`, `identifiantLegal?` (ICE), `actif`, `notes?`, timestamps, soft delete
+- **`Utilisateur.societeId`** (nullable) — visible et modifiable dans la fiche utilisateur
+- **CRUD Sociétés** : liste, création, modification, consultation, activation/désactivation. Pas de suppression physique
+- Le rattachement société est une **étiquette avec filtres**, pas un cloisonnement : tout le monde voit tout, les listes se filtrent par société. Ce choix reste réversible vers un cloisonnement strict tant que les filtres passent par la couche service
+
+**Fini quand :** plus aucun écran, route ou permission ne mentionne un fournisseur ou un achat ; une société se crée, se modifie et se désactive ; un utilisateur se rattache à une société depuis sa fiche ; les deux `tsc --noEmit` et les builds passent.
+
+#### Chantier 2b — Authentification et RBAC · effort : M
 
 - Modèles `Role`, `Permission`, `RolePermission`, `Session` ; `Utilisateur` reçoit `motDePasseHash`, `roleId`, `actif`, `derniereConnexion`, `employeId?`
 - Middlewares `chargerSession`, `exigerPermission`, `limiteurDebit`
 - Routes `/api/auth/login`, `/logout`, `/moi`, `/changer-mot-de-passe`
-- Seed des 6 rôles et de leurs permissions (matrice §5.2 de la Phase 1)
+- Seed des 6 rôles et de leurs permissions (matrice §5.2 de la Phase 1), **plus la permission `societes.gerer`**
 - Frontend : page de connexion, contexte utilisateur, routes protégées, masquage des actions non autorisées
 - **Toutes les routes `/api` existantes passent derrière le middleware** — c'est ce qui ferme l'API ouverte
+- Cadrage réseau interne / VPN : HTTPS et cookie `Secure` malgré le réseau interne · rate limiting indexé sur l'email, jamais sur l'IP seule (NAT d'entreprise) · temporisation croissante plutôt que verrouillage dur · sessions 8 h glissantes avec plafond absolu 12 h · `SameSite=Lax` + vérification d'`Origin` · `Utilisateur.sourceAuth` prévu pour un SSO ultérieur, non implémenté
 
 **Fini quand :** un appel `curl` sans cookie sur n'importe quelle route de mutation renvoie 401, et un `AUDITOR` reçoit 403 sur une création. Test automatisé, pas vérification manuelle.
 
 **Attention :** la matrice de permissions existante dans `utilisateurs.service.ts` doit être remplacée, pas complétée. Deux systèmes de permissions en parallèle, c'est la garantie qu'un des deux sera contourné.
+
+**Prérequis, hérité de la revue du chantier 1 :** l'extension soft delete ne couvre pas `findUnique`. Tant que ce n'est pas corrigé, `findUnique({ where: { email } })` au login laisserait un compte archivé se connecter — ce qui annule la révocation immédiate, seule raison d'avoir choisi des sessions en base plutôt que des JWT. À corriger avant d'écrire la première ligne d'authentification.
 
 #### Chantier 3 — Audit et notifications · effort : S
 
@@ -326,13 +344,17 @@ Deux extensions Prisma globales sont posées ici : filtrage automatique de `supp
 
 #### Chantier 4 — Référentiels et employés · effort : M
 
-`Categorie` (arborescente, 17 catégories seedées), `Marque`, `Modele`, `Localisation`, `Departement`, `Employe` (avec manager auto-référencé). CRUD complet, écrans de paramétrage, import CSV pour les employés.
+`Categorie` (arborescente, 17 catégories seedées), `Marque`, `Modele`, `Localisation`, `Departement`, `Employe` (avec manager auto-référencé, `societeId`). CRUD complet, écrans de paramétrage, import CSV pour les employés.
+
+**Le matériel s'affecte à un `Employe`, pas à un `Utilisateur`** (décision du 22 août). Un employé est une personne physique avec un matricule ; il n'a pas besoin de compte dans l'application, et dans la plupart des parcs la majorité des porteurs de matériel ne s'y connectent jamais. Un `Utilisateur` peut être relié à un `Employe` via `employeId`. Les affectations existantes, aujourd'hui rattachées à des comptes, sont migrées vers des fiches employés créées à partir de ces comptes.
 
 **Prérequis de tout le reste :** un équipement sans catégorie ni localisation n'a pas d'intérêt.
 
 #### Chantier 5 — Équipements · effort : L — **le cœur**
 
 - Modèle `Equipement` complet (§4.6 de la Phase 1), `Document`, `ParametresApplication`
+- `Equipement.societeId` (rattachement à une société) et `Equipement.fournisseur` (champ texte, le module Fournisseurs ayant été supprimé)
+- **Attributs spécifiques par type** : `imei`, `iccid`, `numeroSim`, `operateur`, `adresseMac` — colonnes nullables typées, **pas** un champ JSON générique. Elles restent filtrables, validables et indexables ; un `Json` fourre-tout ne l'est pas. Le formulaire n'affiche que les champs pertinents pour la catégorie choisie
 - **Migration de scission** `ArticleStock` → `Equipement` / `ArticleStock`, avec le fichier de revue de §2.2
 - Génération des numéros d'inventaire et des jetons QR
 - Liste avec filtres avancés, pagination serveur, recherche `pg_trgm`
@@ -377,7 +399,8 @@ Vitest sur les services critiques (permissions, affectation, mouvements, offboar
 |---|---|---|
 | 0 — Gel et filet | S | Tout |
 | 1 — Fondations de données | M | Tout |
-| 2 — Auth et RBAC | M | Mise en production |
+| 2a — Nettoyage fonctionnel et Sociétés | M | 2b |
+| 2b — Auth et RBAC | M | Mise en production |
 | 3 — Audit et notifications | S | Conformité |
 | 4 — Référentiels et employés | M | 5 à 9 |
 | 5 — Équipements | L | 6 à 9 |
@@ -389,6 +412,47 @@ Vitest sur les services critiques (permissions, affectation, mouvements, offboar
 | 11 — Tests, Docker, doc | M | Production |
 
 *S ≈ une demi-journée à une journée · M ≈ deux à quatre jours · L ≈ une semaine.* Ordres de grandeur pour un développeur à temps plein, à ajuster une fois le code réel consulté.
+
+---
+
+### 4.5 Critères d'acceptation des chantiers 5 et 6 — demande du 22 août
+
+Les points 5 à 10 de la demande décrivent le comportement attendu mieux que ne le faisait la version 1.0 de ce plan. Ils ne constituent pas un chantier à part : ce sont les **critères de recette** des chantiers 5 et 6, qui construisent les tables sur lesquelles ils reposent.
+
+#### Historique des affectations — chantier 6
+
+Pour chaque matériel, l'historique doit restituer : détenteur actuel · détenteurs précédents · date d'affectation · date de restitution · date de réaffectation · site · société · état du matériel à la remise et au retour · motif ou commentaire.
+
+Chaque changement de détenteur crée une **nouvelle ligne** ; aucune ligne n'est écrasée ni modifiée. Exemple attendu sur `IT-PC-001` :
+
+```text
+01/02/2026  Affecté à       Employé A
+15/05/2026  Restitué        état : bon
+16/05/2026  Réaffecté à     Employé B
+10/08/2026  Restitué        état : correct
+12/08/2026  Réaffecté à     Employé C
+```
+
+Consultable depuis trois endroits : la fiche du matériel, la fiche de l'employé, et une vue générale des affectations filtrable.
+
+#### Formulaire d'affectation en deux temps — chantier 6
+
+1. **Choix du type de matériel** — liste alimentée dynamiquement depuis les catégories réellement présentes en stock. Aucune liste codée en dur.
+2. **Choix du matériel** — la liste ne contient que les équipements de ce type dont le statut est `AVAILABLE` : ni affectés, ni sortis, ni réformés, ni en maintenance. Chaque ligne affiche numéro d'inventaire, désignation, marque, modèle, numéro de série, et selon la catégorie l'IMEI, l'ICCID et l'opérateur.
+
+La double affectation est impossible — garantie par l'index unique partiel sur les affectations actives, pas par un contrôle dans l'interface.
+
+#### Cohérence des statuts — chantier 6
+
+| Opération | Effet |
+|---|---|
+| Affectation validée | Statut → `ASSIGNED` · disparaît des disponibles · ligne d'historique créée · détenteur courant mis à jour |
+| Restitution | Affectation active clôturée · historique conservé · statut → `AVAILABLE` si l'état constaté le permet, sinon `MAINTENANCE` ou `DAMAGED` |
+| Réaffectation | Ancienne affectation clôturée **puis** nouvelle créée, dans la même transaction · les deux visibles à l'historique |
+
+#### Recette fonctionnelle
+
+Les 18 scénarios de la demande servent de recette aux chantiers 2a, 2b, 5 et 6 : connexion · consultation du stock · création et modification d'un article · consultation des sociétés · rattachement d'une société à un utilisateur · création d'une affectation · sélection d'un type · filtrage des disponibles · affectation · refus de la double affectation · restitution · réaffectation · consultation de l'historique · vérification des rôles · absence de tout écran achat ou fournisseur · build frontend · build backend · absence d'erreur console et API.
 
 ---
 

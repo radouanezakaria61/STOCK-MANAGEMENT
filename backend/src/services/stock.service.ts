@@ -91,7 +91,7 @@ export interface EntreeArticle {
   unitPriceMAD?: unknown;
   location?: string;
   status?: string;
-  vendorName?: string;
+  fournisseur?: string;
   notes?: string;
   performedBy?: string;
 }
@@ -108,7 +108,7 @@ export async function creerArticle(data: EntreeArticle) {
     unitPriceMAD,
     location,
     status,
-    vendorName,
+    fournisseur,
     notes,
     performedBy
   } = data;
@@ -140,7 +140,7 @@ export async function creerArticle(data: EntreeArticle) {
         totalValueMAD: qty * unitPrice,
         location: location || "Magasin Central IT (Casablanca)",
         status: status || "En Stock",
-        vendorName: vendorName || null,
+        fournisseur: fournisseur || null,
         purchaseDate: new Date(),
         notes: notes || ""
       }

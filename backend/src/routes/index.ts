@@ -2,7 +2,12 @@ import { Router, Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
 import { ErreurMetier } from "../lib/erreurs.js";
 import { obtenirDonneesGlobales } from "../services/dashboard.service.js";
-import { creerFournisseur, noterFournisseur } from "../services/fournisseurs.service.js";
+import {
+  listerSocietes,
+  creerSociete,
+  modifierSociete,
+  changerActivationSociete
+} from "../services/societes.service.js";
 import {
   listerUtilisateurs,
   creerUtilisateur,
@@ -41,13 +46,20 @@ routerApi.get("/data", h(async (_req, res) => {
   res.json({ status: "ok", data });
 }));
 
-// Fournisseurs — partagés avec le futur parc IT (équipements, licences)
-routerApi.post("/vendors", h(async (req, res) => {
-  const r = await creerFournisseur(req.body);
+// Sociétés — étiquette de rattachement (filtres), pas de suppression physique
+routerApi.get("/societes", h(async (_req, res) => {
+  res.json({ status: "ok", data: await listerSocietes() });
+}));
+routerApi.post("/societes", h(async (req, res) => {
+  const r = await creerSociete(req.body);
   res.status(201).json(r);
 }));
-routerApi.post("/vendors/:id/rating", h(async (req, res) => {
-  const r = await noterFournisseur(req.params["id"]!, req.body);
+routerApi.put("/societes/:id", h(async (req, res) => {
+  const r = await modifierSociete(req.params["id"]!, req.body);
+  res.json(r);
+}));
+routerApi.post("/societes/:id/statut", h(async (req, res) => {
+  const r = await changerActivationSociete(req.params["id"]!, req.body["actif"] === true);
   res.json(r);
 }));
 

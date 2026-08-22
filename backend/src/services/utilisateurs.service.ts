@@ -2,46 +2,9 @@
 import { conflit, introuvable, requeteInvalide } from "../lib/erreurs.js";
 import { numeroSuivant } from "../lib/ids.js";
 
-// Matrice des permissions par défaut selon le rôle (héritée de l'existant).
-// Remplacée par le RBAC serveur au chantier 2 — ne pas étendre.
-const PERMISSIONS_DEFAUT: Record<string, Record<string, boolean>> = {
-  ADMIN: {
-    canCreatePO: true,
-    canApprovePO: true,
-    canManageVendors: true,
-    canEvaluateBids: true,
-    canGenerateContracts: true,
-    canManageUsers: true,
-    canViewBudgets: true
-  },
-  PROCUREMENT_MANAGER: {
-    canCreatePO: true,
-    canApprovePO: true,
-    canManageVendors: true,
-    canEvaluateBids: true,
-    canGenerateContracts: true,
-    canManageUsers: false,
-    canViewBudgets: true
-  },
-  BUYER: {
-    canCreatePO: true,
-    canApprovePO: false,
-    canManageVendors: false,
-    canEvaluateBids: true,
-    canGenerateContracts: false,
-    canManageUsers: false,
-    canViewBudgets: true
-  },
-  AUDITOR: {
-    canCreatePO: false,
-    canApprovePO: false,
-    canManageVendors: false,
-    canEvaluateBids: false,
-    canGenerateContracts: false,
-    canManageUsers: false,
-    canViewBudgets: true
-  }
-};
+// Rôles applicatifs après le retrait des rôles achats (plan v1.2 §3.2).
+// Le RBAC serveur fin remplace ce simple contrôle au chantier 2.
+const ROLES_AUTORISES = ["ADMIN", "AUDITOR", "UTILISATEUR"] as const;
 
 export interface EntreeUtilisateur {
   name?: string;
@@ -51,15 +14,7 @@ export interface EntreeUtilisateur {
   jobTitle?: string;
   role?: string;
   status?: string;
-  spendingLimitMAD?: unknown;
-  permissions?: Record<string, boolean>;
-}
-
-function plafondParDefaut(role: string): number {
-  if (role === "ADMIN") return 1000000;
-  if (role === "PROCUREMENT_MANAGER") return 300000;
-  return 50000;
-
+  societeId?: string | null;
 }
 
 async function trouverUtilisateur(idOuReference: string) {
@@ -68,27 +23,32 @@ async function trouverUtilisateur(idOuReference: string) {
   });
 }
 
+async function resoudreSociete(idOuReference: string | null | undefined) {
+  if (idOuReference === undefined || idOuReference === null || idOuReference === "") return null;
+  const societe = await prisma.societe.findFirst({
+    where: { OR: [{ id: idOuReference }, { reference: idOuReference }] }
+  });
+  if (!societe) throw requeteInvalide("La société indiquée n'existe pas.");
+  return societe.id;
+}
+
 export async function listerUtilisateurs() {
-  const utilisateurs = await prisma.utilisateur.findMany({ orderBy: { creeLe: "desc" } });
+  const utilisateurs = await prisma.utilisateur.findMany({
+    orderBy: { creeLe: "desc" },
+    include: { societe: true }
+  });
   return utilisateurs;
 }
 
 export async function creerUtilisateur(data: EntreeUtilisateur) {
-  const {
-    name,
-    email,
-    phone,
-    department,
-    jobTitle,
-    role,
-    status,
-    spendingLimitMAD,
-    permissions
-  } = data;
+  const { name, email, phone, department, jobTitle, role, status, societeId } = data;
 
   if (!name || !email || !department || !role) {
     throw requeteInvalide("Nom, email, département et rôle sont obligatoires.");
   }
+  const roleFinal = ROLES_AUTORISES.includes(role as (typeof ROLES_AUTORISES)[number])
+    ? role
+    : "UTILISATEUR";
 
   // Unicité d'email (contrôle insensible à la casse, comme l'existant)
   const existant = await prisma.utilisateur.findFirst({
@@ -98,11 +58,7 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
     throw conflit("Un utilisateur avec cette adresse email existe déjà.");
   }
 
-  const roleFinal = role || "BUYER";
-  const permissionsFinales =
-    permissions ||
-    PERMISSIONS_DEFAUT[roleFinal] ||
-    PERMISSIONS_DEFAUT["BUYER"]!;
+  const societeIdFinale = await resoudreSociete(societeId);
 
   const referencesExistantes = (
     await prisma.utilisateur.findMany({ select: { reference: true }, where: { reference: { startsWith: "usr-" } } })
@@ -116,12 +72,10 @@ export async function creerUtilisateur(data: EntreeUtilisateur) {
       email,
       phone: phone || "",
       department,
-      jobTitle: jobTitle || "Collaborateur Achats",
+      jobTitle: jobTitle || "Collaborateur",
       role: roleFinal,
       status: status || "Actif",
-      spendingLimitMAD:
-        spendingLimitMAD !== undefined ? Number(spendingLimitMAD) : plafondParDefaut(roleFinal),
-      permissions: permissionsFinales,
+      societeId: societeIdFinale,
       avatarUrl: ""
     }
   });
@@ -141,12 +95,8 @@ export async function modifierUtilisateur(idOuReference: string, data: EntreeUti
   if (data.jobTitle !== undefined) donnees["jobTitle"] = data.jobTitle;
   if (data.role !== undefined) donnees["role"] = data.role;
   if (data.status !== undefined) donnees["status"] = data.status;
-  if (data.spendingLimitMAD !== undefined)
-    donnees["spendingLimitMAD"] = Number(data.spendingLimitMAD);
-  if (data.permissions !== undefined) {
-    const actuelles = utilisateur.permissions as Record<string, boolean>;
-    donnees["permissions"] = { ...actuelles, ...data.permissions };
-  }
+  if (data.societeId !== undefined)
+    donnees["societeId"] = await resoudreSociete(data.societeId);
 
   const misAJour = await prisma.utilisateur.update({ where: { id: utilisateur.id }, data: donnees });
   return { message: "Utilisateur mis à jour avec succès.", data: misAJour };
