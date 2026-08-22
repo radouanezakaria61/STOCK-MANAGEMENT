@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { ErreurMetier } from "../lib/erreurs.js";
 import { lireContexteSession, adresseIpDe, type ContexteSession } from "../lib/auth.js";
+import { prisma } from "../lib/prisma.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -48,65 +49,77 @@ export function exigerPermission(code: string) {
   };
 }
 
-// ── Limitation des tentatives de connexion (phases 12-13) ────────────
+// ── Limitation des tentatives de connexion (phases 12-13, chantier 3.5) ──
 // 5 échecs en 15 minutes par couple IP + identifiant déclenchent une
 // temporisation croissante. Jamais de verrou définitif : cela permettrait
 // une négation de service ciblée contre un compte connu.
+// Chantier 3.5 : état persisté dans la table `tentatives_connexion` —
+// survit aux redémarrages du serveur et est partagé entre instances.
 
-interface TentativesConnexion {
-  echecs: number;
-  bloqueJusqua: number;
-  fenetreOuverte: number;
-}
-
-const FENETRE_MS = 15 * 60_000;
+const FENETRE_S = 15 * 60; // secondes
 const MAX_ECHECS_AVANT_TEMPORISATION = 5;
-const tentatives = new Map<string, TentativesConnexion>();
-
-function purgerTentatives(maintenant: number): void {
-  for (const [cle, entree] of tentatives) {
-    if (
-      maintenant - entree.fenetreOuverte > FENETRE_MS &&
-      entree.bloqueJusqua < maintenant
-    ) {
-      tentatives.delete(cle);
-    }
-  }
-}
 
 export function cleLimiteurConnexion(req: Request, identifiant: string): string {
   return `${adresseIpDe(req) ?? "inconnue"}|${identifiant.trim().toLowerCase()}`;
 }
 
+// Purge opportuniste (~5 % des vérifications) des entrées entièrement
+// expirées : fenêtre écoulée ET blocage terminé. Fire-and-forget : ne doit
+// jamais retarder ni faire échouer une tentative de connexion.
+function purgerSiNecessaire(): void {
+  if (Math.random() >= 0.05) return;
+  const frontiereFenetre = new Date(Date.now() - FENETRE_S * 1000);
+  prisma.tentativeConnexion
+    .deleteMany({
+      where: {
+        fenetreOuverte: { lte: frontiereFenetre },
+        OR: [{ bloqueJusqua: null }, { bloqueJusqua: { lte: new Date() } }]
+      }
+    })
+    .catch(() => undefined);
+}
+
 /** Secondes d'attente restantes avant une nouvelle tentative, 0 si autorisée. */
-export function verifierLimiteConnexion(cle: string): number {
-  const maintenant = Date.now();
-  purgerTentatives(maintenant);
-  const entree = tentatives.get(cle);
-  if (!entree || entree.bloqueJusqua <= maintenant) return 0;
-  return Math.ceil((entree.bloqueJusqua - maintenant) / 1000);
+export async function verifierLimiteConnexion(cle: string): Promise<number> {
+  purgerSiNecessaire();
+  const entree = await prisma.tentativeConnexion.findUnique({ where: { cle } });
+  if (!entree?.bloqueJusqua || entree.bloqueJusqua.getTime() <= Date.now()) return 0;
+  return Math.ceil((entree.bloqueJusqua.getTime() - Date.now()) / 1000);
 }
 
-export function enregistrerEchecConnexion(cle: string): void {
-  const maintenant = Date.now();
-  const entree = tentatives.get(cle) ?? { echecs: 0, bloqueJusqua: 0, fenetreOuverte: maintenant };
-  if (maintenant - entree.fenetreOuverte > FENETRE_MS) {
-    entree.echecs = 0;
-    entree.fenetreOuverte = maintenant;
-  }
-  entree.echecs += 1;
-  if (entree.echecs >= MAX_ECHECS_AVANT_TEMPORISATION) {
-    const palier = Math.min(entree.echecs - MAX_ECHECS_AVANT_TEMPORISATION + 1, 4);
-    entree.bloqueJusqua = Math.min(
-      maintenant + 30_000 * 2 ** (palier - 1), // 30 s → 1 min → 2 min → 4 min
-      maintenant + FENETRE_MS
-    );
-  }
-  tentatives.set(cle, entree);
+// Upsert ATOMIQUE côté PostgreSQL : la décision (nouveau compteur, fenêtre
+// réinitialisée, palier de temporisation) est évaluée dans la même requête
+// que l'écriture, donc deux échecs simultanés ne peuvent pas se perdre.
+// Paliers identiques à l'ancienne version mémoire :
+//   5ᵉ échec → 30 s, 6ᵉ → 1 min, 7ᵉ → 2 min, 8ᵉ et plus → 4 min,
+// plafonnés à la durée de la fenêtre.
+export async function enregistrerEchecConnexion(cle: string): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO tentatives_connexion (cle, echecs, bloque_jusqua, fenetre_ouverte)
+    VALUES (${cle}, 1, NULL, NOW())
+    ON CONFLICT (cle) DO UPDATE SET
+      fenetre_ouverte =
+        CASE WHEN tentatives_connexion.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_S})
+             THEN tentatives_connexion.fenetre_ouverte ELSE NOW() END,
+      echecs =
+        CASE WHEN tentatives_connexion.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_S})
+             THEN tentatives_connexion.echecs + 1 ELSE 1 END,
+      bloque_jusqua =
+        CASE
+          WHEN tentatives_connexion.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_S})
+               AND tentatives_connexion.echecs + 1 >= ${MAX_ECHECS_AVANT_TEMPORISATION}
+          THEN LEAST(
+                 NOW() + make_interval(secs =>
+                   CASE LEAST(tentatives_connexion.echecs - ${MAX_ECHECS_AVANT_TEMPORISATION} + 2, 4)
+                     WHEN 1 THEN 30 WHEN 2 THEN 60 WHEN 3 THEN 120 ELSE 240 END),
+                 NOW() + make_interval(secs => ${FENETRE_S}))
+          ELSE NULL
+        END
+  `;
 }
 
-export function reinitialiserConnexion(cle: string): void {
-  tentatives.delete(cle);
+export async function reinitialiserConnexion(cle: string): Promise<void> {
+  await prisma.tentativeConnexion.deleteMany({ where: { cle } });
 }
 
 // ── Anti-CSRF léger (réseau interne) ─────────────────────────────────

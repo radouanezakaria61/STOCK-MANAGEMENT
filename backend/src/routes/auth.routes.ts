@@ -69,7 +69,7 @@ routerAuth.post(
     const { identifiant, motDePasse } = schemaConnexion.parse(req.body);
     const cleLimiteur = `${adresseIpDe(req) ?? "inconnue"}|${identifiant.trim().toLowerCase()}`;
 
-    const attenteSecondes = verifierLimiteConnexion(cleLimiteur);
+    const attenteSecondes = await verifierLimiteConnexion(cleLimiteur);
     if (attenteSecondes > 0) {
       res.setHeader("Retry-After", String(attenteSecondes));
       throw new ErreurMetier(
@@ -110,7 +110,7 @@ routerAuth.post(
       utilisateur.status === "Actif";
 
     if (!(compteUtilisable && motDePasseValide)) {
-      enregistrerEchecConnexion(cleLimiteur);
+      await enregistrerEchecConnexion(cleLimiteur);
       await journaliserAudit(
         {
           action: "LOGIN_FAILED",
@@ -122,7 +122,7 @@ routerAuth.post(
       throw new ErreurMetier(401, MESSAGE_ECHEC_CONNEXION);
     }
 
-    reinitialiserConnexion(cleLimiteur);
+    await reinitialiserConnexion(cleLimiteur);
     await ouvrirSession(req, res, utilisateur.id);
     await prisma.utilisateur.update({
       where: { id: utilisateur.id },
