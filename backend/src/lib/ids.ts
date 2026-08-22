@@ -7,11 +7,6 @@ export function maintenant(): Date {
   return new Date();
 }
 
-/** Dans n jours, en Date (midi UTC pour éviter tout décalage de fuseau). */
-export function dateFuture(days: number): Date {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-}
-
 /** Date du jour au format ISO court (réservée aux chaînes d'affichage JSON). */
 export function dateDuJour(): string {
   return new Date().toISOString().slice(0, 10);

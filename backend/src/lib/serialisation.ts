@@ -11,8 +11,6 @@ import { Prisma } from "@prisma/client";
 // creeLe → createdAt, derniereConnexion → lastLogin.
 
 const CHAMPS_DATE_SEULE = new Set([
-  "createdDate",
-  "deliveryDate",
   "purchaseDate",
   "warrantyExpiry",
   "date",

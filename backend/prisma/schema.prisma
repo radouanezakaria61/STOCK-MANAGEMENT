@@ -1,4 +1,4 @@
-// Schéma de données — Gestion des Achats & Approvisionnements
+// Schéma de données — Gestion de Parc Informatique (IT Asset Management)
 // PostgreSQL 16 via Prisma ORM.
 //
 // Chantier 1 — Fondations de données (02-plan-convergence.md §4.3) :
@@ -10,6 +10,12 @@
 //    plus aucune suppression physique des entités métier.
 //  - Traçabilité `creeLe` / `modifieLe` partout ; `seq` supprimée : le tri
 //    « plus récent d'abord » est un tri sur creeLe décroissant.
+//
+// Décision du 22/08/2026 (plan §1.1) : les modules achats sont supprimés.
+// Les modèles BonCommande, LigneCommande, Budget, AppelOffres et Offre ont
+// été retirés du schéma ; Fournisseur est conservé pour le parc IT
+// (équipements, licences, maintenance) — ses champs alimentés par les
+// commandes (totalSpend, activeContracts) ont disparu avec leur source.
 
 generator client {
   provider = "prisma-client-js"
@@ -20,123 +26,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─────────────────────────────── ACHATS ───────────────────────────────
+// ───────────────────────────── FOURNISSEURS ───────────────────────────
 
 model Fournisseur {
-  id              String        @id @default(uuid())
-  reference       String        @unique
-  name            String        @map("nom")
-  contact         String
-  email           String
-  category        String        @map("categorie")
-  qualityScore    Int           @map("score_qualite")
-  onTimeDelivery  Int           @map("taux_ponctualite")
-  activeContracts Int           @default(0) @map("contrats_actifs")
-  totalSpend      Decimal       @default(0) @db.Decimal(12, 2) @map("depense_totale")
-  riskLevel       String        @default("Low") @map("niveau_risque")
-  status          String        @default("Approved")
-  supprimeLe      DateTime?
-  creeLe          DateTime      @default(now()) @map("cree_le")
-  modifieLe       DateTime      @updatedAt @map("modifie_le")
-
-  bonsCommande BonCommande[]
-
-  @@map("fournisseurs")
-}
-
-model BonCommande {
-  id             String   @id @default(uuid())
-  reference      String   @unique
-  title          String   @map("titre")
-  vendorId       String?  @map("fournisseur_id")
-  vendorName     String   @map("fournisseur_nom")
-  amount         Decimal  @db.Decimal(12, 2) @map("montant")
-  category       String   @map("categorie")
-  department     String   @map("departement")
-  requester      String   @map("demandeur")
-  status         String
-  createdDate    DateTime @map("date_creation")
-  deliveryDate   DateTime @map("date_livraison")
-  auditScore     Int      @map("score_audit")
-  notes          String   @default("")
+  id             String  @id @default(uuid())
+  reference      String  @unique
+  name           String  @map("nom")
+  contact        String
+  email          String
+  category       String  @map("categorie")
+  qualityScore   Int     @map("score_qualite")
+  onTimeDelivery Int     @map("taux_ponctualite")
+  riskLevel      String  @default("Low") @map("niveau_risque")
+  status         String  @default("Approved")
   supprimeLe     DateTime?
   creeLe         DateTime @default(now()) @map("cree_le")
   modifieLe      DateTime @updatedAt @map("modifie_le")
 
-  fournisseur   Fournisseur?     @relation(fields: [vendorId], references: [id], onDelete: SetNull)
-  items         LigneCommande[]
-  articlesStock ArticleStock[]
-
-  @@index([vendorId])
-  @@map("bons_commande")
+  @@map("fournisseurs")
 }
 
-model LigneCommande {
-  id        Int     @id @default(autoincrement())
-  poId      String  @map("bc_id")
-  desc      String
-  qty       Int
-  unitPrice Decimal @db.Decimal(12, 2) @map("prix_unitaire")
-  total     Decimal @db.Decimal(12, 2)
-  creeLe    DateTime @default(now()) @map("cree_le")
-
-  bonCommande BonCommande @relation(fields: [poId], references: [id], onDelete: Cascade)
-
-  @@index([poId])
-  @@map("lignes_commande")
-}
-
-model Budget {
-  id         String   @id @default(uuid())
-  reference  String   @unique
-  name       String   @unique @map("nom")
-  allocated  Decimal  @db.Decimal(12, 2)
-  spent      Decimal  @default(0) @db.Decimal(12, 2) @map("depense")
-  supprimeLe DateTime?
-  creeLe     DateTime @default(now()) @map("cree_le")
-  modifieLe  DateTime @updatedAt @map("modifie_le")
-
-  @@map("budgets")
-}
-
-// ───────────────────────── APPELS D'OFFRES ────────────────────────────
-
-model AppelOffres {
-  id            String   @id @default(uuid())
-  reference     String   @unique
-  title         String   @map("titre")
-  department    String   @map("departement")
-  targetBudget  Decimal  @db.Decimal(12, 2) @map("budget_cible")
-  itemsRequired String   @map("besoins")
-  supprimeLe    DateTime?
-  creeLe        DateTime @default(now()) @map("cree_le")
-  modifieLe     DateTime @updatedAt @map("modifie_le")
-
-  bids Offre[]
-
-  @@map("appels_offres")
-}
-
-model Offre {
-  id              String   @id @default(uuid())
-  rfqId           String   @map("appel_offres_id")
-  vendorName      String   @map("fournisseur_nom")
-  unitPrice       Decimal  @db.Decimal(12, 2) @map("prix_unitaire")
-  totalPrice      Decimal  @db.Decimal(12, 2) @map("prix_total")
-  leadTimeDays    Int      @map("delai_jours")
-  warrantyYears   Int      @map("garantie_ans")
-  complianceLevel String   @map("conformite")
-  riskFlags       String[] @map("signaux_risque")
-  notes           String   @default("")
-  creeLe          DateTime @default(now()) @map("cree_le")
-
-  appelOffres AppelOffres @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-
-  @@index([rfqId])
-  @@map("offres")
-}
-
-// ────────────────────────────── UTILISATEURS ──────────────────────────
+// ──────────────────────────── UTILISATEURS ────────────────────────────
 
 model Utilisateur {
   id                String   @id @default(uuid())
@@ -162,36 +72,34 @@ model Utilisateur {
 // ──────────────────────────── STOCK IT ────────────────────────────────
 
 model ArticleStock {
-  id                 String    @id @default(uuid())
-  reference          String    @unique
-  assetTag           String    @map("etiquette")
-  name               String    @map("nom")
-  category           String    @map("categorie")
-  brand              String    @map("marque")
-  model              String
-  serialNumber       String    @map("numero_serie")
-  quantity           Int
-  availableQty       Int       @map("quantite_disponible")
-  allocatedQty       Int       @map("quantite_affectee")
-  minThreshold       Int       @map("seuil_minimum")
-  unitPriceMAD       Decimal   @db.Decimal(12, 2) @map("prix_unitaire_mad")
-  totalValueMAD      Decimal   @db.Decimal(12, 2) @map("valeur_totale_mad")
-  location           String    @map("emplacement")
-  status             String
-  purchaseOrderId    String?   @map("bc_id")
-  purchaseOrderTitle String?   @map("bc_titre")
-  vendorName         String?   @map("fournisseur_nom")
-  purchaseDate       DateTime? @map("date_achat")
-  warrantyExpiry     DateTime? @map("fin_garantie")
-  assignedTo         Json?     @map("affecte_a")
-  specs              Json?
-  notes              String    @default("")
-  supprimeLe         DateTime?
-  creeLe             DateTime  @default(now()) @map("cree_le")
-  modifieLe          DateTime  @updatedAt @map("modifie_le")
+  id             String    @id @default(uuid())
+  reference      String    @unique
+  assetTag       String    @map("etiquette")
+  name           String    @map("nom")
+  category       String    @map("categorie")
+  brand          String    @map("marque")
+  model          String
+  serialNumber   String    @map("numero_serie")
+  quantity       Int
+  availableQty   Int       @map("quantite_disponible")
+  allocatedQty   Int       @map("quantite_affectee")
+  minThreshold   Int       @map("seuil_minimum")
+  unitPriceMAD   Decimal   @db.Decimal(12, 2) @map("prix_unitaire_mad")
+  totalValueMAD  Decimal   @db.Decimal(12, 2) @map("valeur_totale_mad")
+  location       String    @map("emplacement")
+  status         String
+  // Provenance saisie manuellement jusqu'à l'écran « Réception » (chantier 7)
+  vendorName     String?   @map("fournisseur_nom")
+  purchaseDate   DateTime? @map("date_achat")
+  warrantyExpiry DateTime? @map("fin_garantie")
+  assignedTo     Json?     @map("affecte_a")
+  specs          Json?
+  notes          String    @default("")
+  supprimeLe     DateTime?
+  creeLe         DateTime  @default(now()) @map("cree_le")
+  modifieLe      DateTime  @updatedAt @map("modifie_le")
 
-  bonCommande BonCommande?     @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
-  mouvements  MouvementStock[]
+  mouvements MouvementStock[]
 
   @@index([category])
   @@index([status])
@@ -200,19 +108,18 @@ model ArticleStock {
 
 // Journal immuable : pas de modification ni suppression (AGENTS.md règle 3).
 model MouvementStock {
-  id              String   @id @default(uuid())
-  reference       String   @unique
-  stockItemId     String?  @map("article_id")
-  itemName        String   @map("article_nom")
-  type            String
-  quantity        Int
-  performedBy     String   @map("effectue_par")
-  recipient       String?  @map("destinataire")
-  department      String?  @map("departement")
-  date            DateTime
-  purchaseOrderId String?  @map("bc_id")
-  notes           String   @default("")
-  creeLe          DateTime @default(now()) @map("cree_le")
+  id          String   @id @default(uuid())
+  reference   String   @unique
+  stockItemId String?  @map("article_id")
+  itemName    String   @map("article_nom")
+  type        String
+  quantity    Int
+  performedBy String   @map("effectue_par")
+  recipient   String?  @map("destinataire")
+  department  String?  @map("departement")
+  date        DateTime
+  notes       String   @default("")
+  creeLe      DateTime @default(now()) @map("cree_le")
 
   // L'historique survit aux suppressions parce que l'article est soft-deleted
   // et que la FK interdit toute suppression physique (Restrict).
@@ -222,7 +129,7 @@ model MouvementStock {
   @@map("mouvements_stock")
 }
 
-// ───────────────────────────── AFFECTATIONS ───────────────────────────
+// ──────────────────────────── AFFECTATIONS ────────────────────────────
 
 model Affectation {
   id                        String   @id @default(uuid())

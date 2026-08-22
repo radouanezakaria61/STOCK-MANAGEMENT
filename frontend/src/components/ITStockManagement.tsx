@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ITStockItem, StockMovement, PurchaseOrder, AppUser, StockCategory, StockStatus } from "../types";
+import { ITStockItem, StockMovement, AppUser, StockCategory, StockStatus } from "../types";
 import {
   Boxes,
   Plus,
@@ -37,7 +37,6 @@ import {
 interface ITStockManagementProps {
   stockItems: ITStockItem[];
   stockMovements: StockMovement[];
-  purchaseOrders: PurchaseOrder[];
   currentUser: AppUser | null;
   onRefresh: () => void;
   onSelectTab?: (tab: string) => void;
@@ -46,7 +45,6 @@ interface ITStockManagementProps {
 export default function ITStockManagement({
   stockItems,
   stockMovements,
-  purchaseOrders,
   currentUser,
   onRefresh,
   onSelectTab
@@ -59,7 +57,6 @@ export default function ITStockManagement({
 
   // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showImportPOModal, setShowImportPOModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState<ITStockItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -201,34 +198,7 @@ export default function ITStockManagement({
     }
   };
 
-  // 4. Handle 1-Click Import PO into IT Stock
-  const handleImportPO = async (poId: string) => {
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/stock/import-po", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          purchaseOrderId: poId,
-          performedBy: currentUser ? `${currentUser.name} (${currentUser.jobTitle})` : "Responsable Réception Stock",
-          location: "Magasin Central IT (Casablanca)"
-        })
-      });
-      if (res.ok) {
-        setShowImportPOModal(false);
-        onRefresh();
-      } else {
-        const err = await res.json();
-        alert(err.error || "Erreur lors de l'intégration de la commande.");
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // 5. Handle Delete Item
+  // 4. Handle Delete Item
   const handleDeleteItem = async (id: string, name: string) => {
     if (!confirm(`Confirmez-vous la suppression définitive de "${name}" du stock IT ?`)) return;
     try {
@@ -334,17 +304,8 @@ export default function ITStockManagement({
           </button>
         </div>
 
-        {/* Action Buttons: Import from PO & Add Stock */}
+        {/* Action Buttons: Add Stock */}
         <div className="flex items-center flex-wrap gap-2.5 w-full md:w-auto">
-          <button
-            onClick={() => setShowImportPOModal(true)}
-            className="px-3.5 py-2 bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
-            title="Réceptionner directement un Bon de Commande (DA) et intégrer les articles en stock"
-          >
-            <ArrowDownToLine size={14} className="text-emerald-600" />
-            <span>Réceptionner Commande (DA) en Stock</span>
-          </button>
-
           <button
             onClick={() => setShowAddModal(true)}
             className="px-4 py-2 bg-indigo-600 text-white font-bold text-xs rounded-xl hover:bg-indigo-700 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
@@ -454,9 +415,9 @@ export default function ITStockManagement({
                           <div className="text-[10.5px] text-slate-400 flex items-center gap-1.5 mt-0.5">
                             <span className="font-semibold text-slate-600">{item.brand}</span>
                             {item.model && <span>• {item.model}</span>}
-                            {item.purchaseOrderId && (
-                              <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[9.5px] font-mono">
-                                {item.purchaseOrderId}
+                            {item.vendorName && (
+                              <span className="bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded text-[9.5px]">
+                                {item.vendorName}
                               </span>
                             )}
                           </div>
@@ -654,7 +615,7 @@ export default function ITStockManagement({
                         )}
                       </td>
                       <td className="py-3 px-4 text-slate-500 max-w-[240px] truncate">
-                        {mvt.notes || (mvt.purchaseOrderId ? `Lié à la commande ${mvt.purchaseOrderId}` : "Mouvement standard")}
+                        {mvt.notes || "Mouvement standard"}
                       </td>
                     </tr>
                   );
@@ -665,83 +626,7 @@ export default function ITStockManagement({
         </div>
       )}
 
-      {/* 5. MODAL: IMPORT PURCHASE ORDER (DA) INTO STOCK */}
-      {showImportPOModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <ArrowDownToLine className="text-emerald-600" size={20} />
-                <div>
-                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide">
-                    Intégrer les Achats (DA) en Stock IT
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Sélectionnez une commande pour réceptionner et générer automatiquement les actifs IT.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowImportPOModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="py-4 space-y-3 max-h-[400px] overflow-y-auto">
-              {purchaseOrders
-                .filter((po) => po.status !== "Cancelled" && po.status !== "Declined")
-                .map((po) => {
-                  return (
-                    <div
-                      key={po.id}
-                      className="p-3.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition"
-                    >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-slate-900 text-xs font-mono">{po.id}</span>
-                          <span className={`text-[9.5px] px-2 py-0.2 rounded-full font-bold ${
-                            po.status === "Fulfilled" ? "bg-emerald-100 text-emerald-800" : "bg-sky-100 text-sky-800"
-                          }`}>
-                            {po.status === "Fulfilled" ? "Réceptionnée" : "Validée / En cours"}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-slate-800 text-xs">{po.title}</h4>
-                        <p className="text-[11px] text-slate-500">
-                          Fournisseur : <strong>{po.vendorName}</strong> • {po.department}
-                        </p>
-                        <p className="text-xs font-black text-slate-900">
-                          Montant : {formatMAD(po.amount)}
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={() => handleImportPO(po.id)}
-                        disabled={submitting}
-                        className="px-4 py-2 bg-emerald-600 text-white font-bold text-xs rounded-xl hover:bg-emerald-700 transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
-                      >
-                        <ArrowDownToLine size={14} />
-                        <span>Réceptionner & Entrer en Stock</span>
-                      </button>
-                    </div>
-                  );
-                })}
-            </div>
-
-            <div className="pt-4 border-t border-slate-100 flex justify-end">
-              <button
-                onClick={() => setShowImportPOModal(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 6. MODAL: ADD NEW ITEM MANUALLY */}
+      {/* 5. MODAL: ADD NEW ITEM MANUALLY */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200">

@@ -33,8 +33,6 @@ export async function creerFournisseur(data: EntreeFournisseur) {
       category,
       qualityScore: parseInt(String(qualityScore)) || 90,
       onTimeDelivery: parseInt(String(onTimeDelivery)) || 92,
-      activeContracts: 0,
-      totalSpend: 0,
       riskLevel: riskLevel || "Low",
       status: "Approved"
     }

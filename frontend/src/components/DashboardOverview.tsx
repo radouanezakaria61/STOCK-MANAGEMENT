@@ -1,228 +1,152 @@
 import React, { useState } from "react";
-import { PurchaseOrder, Vendor, Budget } from "../types";
+import { Vendor, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "../types";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import BudgetSpendVisualizer from "./BudgetSpendVisualizer";
 import { 
-  FileCheck2, 
   TrendingUp, 
-  Landmark, 
   Clock, 
-  Truck, 
   AlertTriangle, 
   AlertCircle,
   Languages, 
   Layers, 
   ArrowRight,
-  Sparkles,
   ShieldCheck,
   CheckCircle2,
-  PackageCheck
+  PackageCheck,
+  Boxes,
+  FileCheck2,
+  Users2
 } from "lucide-react";
 
 interface DashboardOverviewProps {
-  purchaseOrders: PurchaseOrder[];
   vendors: Vendor[];
-  budgets: Budget[];
+  users: AppUser[];
+  stockItems: ITStockItem[];
+  stockMovements: StockMovement[];
+  assignments: MaterialAssignment[];
   onSelectTab: (tab: string) => void;
 }
 
-// Custom segmented progress for the "Phase & Statut" step indicator bars
-interface SegmentedProgressProps {
-  current: number;
-  total: number;
-  colorClass?: string;
-}
-
-function SegmentedProgress({ current, total, colorClass = "bg-emerald-500" }: SegmentedProgressProps) {
-  return (
-    <div className="flex items-center gap-1 mt-1.5" id="segmented-progress">
-      {Array.from({ length: total }).map((_, i) => {
-        const isActive = i < current;
-        return (
-          <div
-            key={i}
-            className={`h-1.5 flex-1 rounded-xs transition-colors duration-300 ${
-              isActive ? colorClass : "bg-slate-200"
-            }`}
-          />
-        );
-      })}
-      <span className="text-[9px] text-slate-400 font-medium ml-1.5 font-mono shrink-0">
-        {current}/{total}
-      </span>
-    </div>
-  );
-}
-
 export default function DashboardOverview({
-  purchaseOrders,
   vendors,
-  budgets,
+  users,
+  stockItems,
+  stockMovements,
+  assignments,
   onSelectTab,
 }: DashboardOverviewProps) {
   const [lang, setLang] = useState<"FR" | "EN">("FR");
-  const [dataSourceMode, setDataSourceMode] = useState<"replica" | "live">("replica");
-  const [loadingRefresh, setLoadingRefresh] = useState(false);
 
-  const handleRefresh = () => {
-    setLoadingRefresh(true);
-    setTimeout(() => setLoadingRefresh(false), 500);
-  };
-
-  // Format currency directly in MAD (Dirham Marocain)
+  // Formatage monétaire direct en MAD (Dirham Marocain)
   const formatMAD = (val: number) => {
     return `${Math.round(val).toLocaleString()} MAD`;
   };
 
-  // 1. DYNAMIC STATS FROM DB (Live Mode)
-  const totalSpendDb = purchaseOrders
-    .filter((po) => po.status !== "Declined" && po.status !== "Cancelled")
-    .reduce((sum, po) => sum + po.amount, 0);
+  // ── Indicateurs calculés depuis la base ──────────────────────────────
+  const articlesSousSeuil = stockItems.filter(
+    (i) => i.availableQty <= i.minThreshold && i.status !== "Rebut / Fin de vie"
+  );
 
-  const pendingPOsDb = purchaseOrders.filter((po) => po.status === "Pending Approval");
-  const urgentApprovalsCountDb = pendingPOsDb.length;
+  const affectationsActives = assignments.filter((a) => a.status === "Active");
 
-  const totalSpentByApprovedDb = purchaseOrders
-    .filter((po) => po.status === "Approved" || po.status === "Fulfilled")
-    .reduce((sum, po) => sum + po.amount, 0);
+  const valeurTotaleParc = stockItems.reduce((sum, i) => sum + (i.totalValueMAD ?? 0), 0);
 
-  // Aggregate monthly database POs for live graph
-  const liveSortedPOs = [...purchaseOrders]
-    .filter((po) => po.status !== "Cancelled" && po.status !== "Declined")
-    .sort((a, b) => new Date(a.createdDate).getTime() - new Date(b.createdDate).getTime());
+  const quantiteTotale = stockItems.reduce((sum, i) => sum + i.quantity, 0);
 
-  const liveDateMap: { [key: string]: number } = {};
-  liveSortedPOs.forEach((po) => {
-    const dateLabel = new Date(po.createdDate).toLocaleDateString(lang === "FR" ? "fr-FR" : "en-US", { month: "short" });
-    liveDateMap[dateLabel] = (liveDateMap[dateLabel] || 0) + po.amount;
-  });
+  const fournisseursARisque = vendors.filter(
+    (v) => v.riskLevel === "High" || v.status === "On Probation"
+  );
 
-  const liveChartData = Object.keys(liveDateMap).map((month) => ({
+  // Graphique : volume mensuel des mouvements de matériel
+  const mouvementsMap: { [key: string]: number } = {};
+  [...stockMovements]
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .forEach((m) => {
+      const dateLabel = new Date(m.date).toLocaleDateString(lang === "FR" ? "fr-FR" : "en-US", { month: "short" });
+      mouvementsMap[dateLabel] = (mouvementsMap[dateLabel] || 0) + Math.abs(m.quantity);
+    });
+
+  const chartData = Object.keys(mouvementsMap).map((month) => ({
     name: month,
-    amount: liveDateMap[month],
+    quantite: mouvementsMap[month],
   }));
 
-  // Default monthly graph points in MAD
-  const defaultLiveChartData = [
-    { name: lang === "FR" ? "Jan" : "Jan", amount: 28000 },
-    { name: lang === "FR" ? "Fév" : "Feb", amount: 45000 },
-    { name: lang === "FR" ? "Mar" : "Mar", amount: 82000 },
-    { name: lang === "FR" ? "Avr" : "Apr", amount: 114000 },
-    { name: lang === "FR" ? "Mai" : "May", amount: 128000 },
-    { name: lang === "FR" ? "Juin" : "Jun", amount: 139064 },
-  ];
+  // Répartition de la valeur du stock par catégorie
+  const repartitionCategories = Object.entries(
+    stockItems.reduce((acc: { [key: string]: number }, item) => {
+      acc[item.category] = (acc[item.category] || 0) + (item.totalValueMAD ?? 0);
+      return acc;
+    }, {})
+  )
+    .map(([categorie, valeur]) => ({ categorie, valeur }))
+    .sort((a, b) => b.valeur - a.valeur);
 
-  const finalChartData = liveChartData.length > 0 ? liveChartData : defaultLiveChartData;
-
-  // 2. REPLICA DATASET DEFINITIONS (Calibrated in MAD)
-  const replicaKPIs = {
-    activeRequests: 16,
-    activeRequestsInProg: 6,
-    pendingValidations: 0,
-    totalEstimatedAmount: 139064,
-    totalEstimatedAmountInProg: 108045,
-    badgeOrdered: 137534,
-    badgeReceived: 34919,
-    pendingReceipts: 3,
-  };
-
-  const replicaDemandsList = [
-    { id: "DA-2026-0023", requester: "Admin System", supplier: "INK SERVICES", status: "Validée", statusEN: "Validated", steps: 4, totalSteps: 5, amount: "75 000 MAD", date: "09 juin", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
-    { id: "DA-2026-0022", requester: "Zakaria Radouane", supplier: "ASTOINE", status: "Validée", statusEN: "Validated", steps: 4, totalSteps: 5, amount: "845 MAD", date: "08 juin", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
-    { id: "DA-2026-0021", requester: "Admin System", supplier: "DMJ TECHNOLOGIE", status: "Réc. complète", statusEN: "Rec. complete", steps: 5, totalSteps: 5, amount: "3 900 MAD", date: "08 juin", color: "bg-emerald-600 text-white" },
-    { id: "DA-2026-0017", requester: "Zakaria Radouane", supplier: "DMJ TECHNOLOGIE", status: "Validée", statusEN: "Validated", steps: 4, totalSteps: 5, amount: "1 000 MAD", date: "07 juin", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
-    { id: "DA-2026-0016", requester: "Zakaria Radouane", supplier: "Tech Distributor", status: "Commandée", statusEN: "Ordered", steps: 4, totalSteps: 5, amount: "15 000 MAD", date: "03 juin", color: "bg-sky-100 text-sky-800 border-sky-300" },
-    { id: "DA-2026-0015", requester: "Sarah Bennani", supplier: "BuroMaroc SARL", status: "Validée", statusEN: "Validated", steps: 4, totalSteps: 5, amount: "22 400 MAD", date: "01 juin", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
-  ];
-
-  const isReplica = dataSourceMode === "replica";
-
-  // Translate dictionaries
   const translate = {
-    title: { FR: "Tableau de bord", EN: "Sourcing Analytics Dashboard" },
+    title: { FR: "Tableau de bord", EN: "IT Asset Dashboard" },
     greeting: { FR: "Bonjour", EN: "Welcome back" },
-    role: { FR: "Administrateur", EN: "Sourcing Administrator" },
+    role: { FR: "Administrateur", EN: "IT Asset Administrator" },
     priorityTitle: { FR: "ACTIONS PRIORITAIRES", EN: "HIGH PRIORITY TASK BLOCKS" },
     priorityActions: { FR: "actions", EN: "actions pending" },
     stockCritique: { FR: "Stock critique", EN: "Critical low stock" },
-    underThreshold: { FR: "1 article sous seuil d'alerte", EN: "1 item below alert threshold" },
-    receptionsCount: { FR: "Réceptions de commandes", EN: "Pending order deliveries" },
-    receptionsDesc: { FR: "Livraisons fournisseurs à réceptionner", EN: "Supplier shipments awaiting check-in" },
-    approvalsCount: { FR: "Validations budgétaires", EN: "Pending budget approvals" },
-    approvalsDesc: { FR: "Demandes d'achats à viser ou autoriser", EN: "Purchase orders awaiting sign-off" },
+    sousSeuil: {
+      FR: (n: number) => `${n} article${n > 1 ? "s" : ""} sous seuil d'alerte`,
+      EN: (n: number) => `${n} item${n > 1 ? "s" : ""} below alert threshold`
+    },
+    affectationsCount: { FR: "Affectations en cours", EN: "Active assignments" },
+    affectationsDesc: { FR: "Dotations matériel actives à suivre", EN: "Active equipment assignments to track" },
+    fournisseursCount: { FR: "Fournisseurs à risque", EN: "At-risk vendors" },
+    fournisseursDesc: { FR: "Profils à surveiller ou en période d'essai", EN: "Vendors on probation or flagged" },
     viewBtn: { FR: "Voir", EN: "Inspect" },
-    receiveBtn: { FR: "Réceptionner", EN: "Receive" },
-    approveBtn: { FR: "Examiner", EN: "Review" },
-    demandsActive: { FR: "DEMANDES ACTIVES", EN: "ACTIVE REQUESTS" },
-    inProgress: { FR: "en cours", EN: "active workflow" },
-    allValidated: { FR: "Tout est validé", EN: "All items approved" },
-    estimatedTotal: { FR: "MONTANT ESTIMÉ TOTAL", EN: "TOTAL VALUATIONS ESTIMATE" },
-    demandsPending: { FR: "VALIDATIONS EN ATTENTE", EN: "PENDING SIGN-OFFS" },
-    receptionsAwaiting: { FR: "RÉCEPTIONS EN ATTENTE", EN: "SHIPPING RECEPTIONS" },
-    deliveriesToProcess: { FR: "livraisons à traiter", EN: "packages to inspect" },
-    latestDemands: { FR: "DERNIÈRES DEMANDES D'ACHATS (DA) & ENGAGEMENTS", EN: "LATEST PURCHASE ORDERS & COMMITMENTS" },
-    numDa: { FR: "N° DA", EN: "PO No." },
-    supplier: { FR: "FOURNISSEUR", EN: "SUPPLIER" },
-    phaseStatut: { FR: "PHASE & STATUT", EN: "PHASE & STATUS" },
-    date: { FR: "DATE", EN: "DATE" },
-    requester: { FR: "DEMANDEUR", EN: "REQUESTER" },
-    amount: { FR: "MONTANT (MAD)", EN: "AMOUNT (MAD)" },
-    monthlyEvolution: { FR: "ÉVOLUTION MENSUELLE DES ENGAGEMENTS", EN: "MONTHLY COMMITMENT EVOLUTION" },
-    chartSub: { FR: "Demandes d'achat & Dépenses réelles - Montant estimatif en Dirhams (MAD)", EN: "Purchase Demands & Actual Spend - Net estimated value in Dirhams (MAD)" },
-    statsHeader: { FR: "INDICATEURS CLÉS LOGISTIQUE & ACHATS", EN: "SOURCING & LOGISTICS SCORECARD" },
-    treatmentRate: { FR: "Taux de traitement", EN: "Handling Rate" },
-    avgTime: { FR: "Délai moyen", EN: "Lead Time" },
-    globalScore: { FR: "Score qualité", EN: "Quality Score" },
-    modeToggleLabel: { FR: "Source de Données", EN: "DataSource Mode" },
-    modeReplica: { FR: "Vue Synthétique 🇲🇦", EN: "Synthetic View 🇲🇦" },
-    modeLive: { FR: "Base de données Live 🗄️", EN: "Live Database 🗄️" },
-    noData: { FR: "Aucune demande d'achat enregistrée", EN: "No active entries mapped yet" }
+    articlesTotal: { FR: "ARTICLES RÉFÉRENCÉS", EN: "REGISTERED ITEMS" },
+    unitesEnStock: { FR: "unités en stock", EN: "units in stock" },
+    affectationsActives: { FR: "AFFECTATIONS ACTIVES", EN: "ACTIVE ASSIGNMENTS" },
+    valeurParc: { FR: "VALEUR DU PARC", EN: "TOTAL ASSET VALUE" },
+    utilisateursCount: { FR: "UTILISATEURS RÉFÉRENCÉS", EN: "REGISTERED USERS" },
+    derniersMouvements: { FR: "DERNIERS MOUVEMENTS DE MATÉRIEL", EN: "LATEST STOCK MOVEMENTS" },
+    colArticle: { FR: "ARTICLE", EN: "ITEM" },
+    colType: { FR: "TYPE", EN: "TYPE" },
+    colQuantite: { FR: "QTÉ", EN: "QTY" },
+    colAuteur: { FR: "OPÉRATEUR", EN: "OPERATOR" },
+    colDate: { FR: "DATE", EN: "DATE" },
+    evolutionMouvements: { FR: "ÉVOLUTION DES MOUVEMENTS DE MATÉRIEL", EN: "EQUIPMENT MOVEMENT EVOLUTION" },
+    chartSub: { FR: "Entrées et sorties de stock - volume mensuel en unités", EN: "Stock in & out - monthly volume in units" },
+    statsHeader: { FR: "INDICATEURS CLÉS DU PARC", EN: "IT ASSET SCORECARD" },
+    tauxAffectation: { FR: "Taux d'affectation", EN: "Allocation Rate" },
+    articlesCritiques: { FR: "Articles critiques", EN: "Critical items" },
+    scoreFournisseurs: { FR: "Score fournisseurs", EN: "Vendor Score" },
+    repartitionCategorie: { FR: "Valeur du stock par catégorie (MAD)", EN: "Stock Value by Category (MAD)" },
+    noData: { FR: "Aucun mouvement enregistré", EN: "No movement recorded yet" }
   };
+
+  const tauxAffectation =
+    quantiteTotale > 0
+      ? Math.round(
+          (stockItems.reduce((sum, i) => sum + i.allocatedQty, 0) / quantiteTotale) * 100
+        )
+      : 0;
+
+  const scoreMoyenFournisseurs =
+    vendors.length > 0
+      ? Math.round(vendors.reduce((sum, v) => sum + v.qualityScore, 0) / vendors.length)
+      : 0;
 
   return (
     <div className="space-y-6">
       
-      {/* 1. MASTER UPPER OPTION CONTROL BAR */}
+      {/* 1. BARRE DE CONTRÔLE SUPÉRIEURE */}
       <div id="data-control-toolbar" className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 p-3 rounded-xl shadow-xs shrink-0 transition-all">
-        
-        {/* Source Switcher */}
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-            <Layers size={13} className="text-indigo-600" /> {translate.modeToggleLabel[lang]}
+            <Layers size={13} className="text-indigo-600" /> {translate.title[lang]}
           </span>
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-            <button
-              onClick={() => setDataSourceMode("replica")}
-              className={`text-[10px] sm:text-xs px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer ${
-                isReplica 
-                  ? "bg-white text-slate-900 shadow-sm font-bold" 
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              {translate.modeReplica[lang]}
-            </button>
-            <button
-              onClick={() => setDataSourceMode("live")}
-              className={`text-[10px] sm:text-xs px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer ${
-                !isReplica 
-                  ? "bg-white text-slate-900 shadow-sm font-bold" 
-                  : "text-slate-500 hover:text-slate-900"
-              }`}
-            >
-              {translate.modeLive[lang]}
-            </button>
-          </div>
         </div>
 
-        {/* Global Controls: Currency (Fixed MAD) & Language */}
+        {/* Devise fixe (MAD) & langue */}
         <div className="flex items-center gap-2.5">
-          {/* Currency Indicator Badge */}
           <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-extrabold px-3 py-1 rounded-lg">
             <span>🇲🇦</span>
             <span>Devise : Dirham Marocain (MAD)</span>
           </div>
 
-          {/* Language translation switch */}
           <div className="flex items-center bg-indigo-50 hover:bg-indigo-100 rounded-lg p-1 border border-indigo-200 transition-colors">
             <Languages size={13} className="text-indigo-600 mr-1 ml-0.5" />
             <select
@@ -237,14 +161,14 @@ export default function DashboardOverview({
         </div>
       </div>
 
-      {/* 2. COMPONENT BANNER (Greeting & Summary) */}
+      {/* 2. BANNIÈRE D'ACCUEIL */}
       <div id="dashboard-header-block" className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white border border-slate-200/80 p-5 rounded-2xl shadow-xs">
         <div>
           <h1 className="text-lg font-black text-slate-800 flex items-center gap-2">
             {translate.greeting[lang]} <span className="text-indigo-600 font-extrabold">{translate.role[lang]}</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Suivi des engagements, approvisionnements et contrôle budgétaire en Dirhams Marocains (MAD).
+            Suivi des équipements, affectations et stock informatique en Dirhams Marocains (MAD).
           </p>
         </div>
 
@@ -256,7 +180,7 @@ export default function DashboardOverview({
         </div>
       </div>
 
-      {/* 3. PRIORITY ACTIONS BANNER (Clean Operational Actions) */}
+      {/* 3. ACTIONS PRIORITAIRES */}
       <div id="priority-actions-banner" className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
         
         <div className="flex items-center justify-between">
@@ -267,23 +191,23 @@ export default function DashboardOverview({
             </span>
           </div>
           <span className="text-xs text-amber-700 font-bold bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
-            3 {translate.priorityActions[lang]}
+            {(articlesSousSeuil.length > 0 ? 1 : 0) + (affectationsActives.length > 0 ? 1 : 0) + (fournisseursARisque.length > 0 ? 1 : 0)} {translate.priorityActions[lang]}
           </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           
-          {/* Card 1: Stock critique */}
+          {/* Carte 1 : Stock critique */}
           <div className="bg-slate-50/40 rounded-xl border border-slate-200/60 p-3.5 flex items-start gap-4 hover:bg-slate-50 transition">
             <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200/50 shrink-0">
               <AlertCircle size={16} />
             </div>
             <div className="space-y-1">
               <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 leading-none">
-                <span className="text-amber-600 font-black">1</span> {translate.stockCritique[lang]}
+                <span className="text-amber-600 font-black">{articlesSousSeuil.length}</span> {translate.stockCritique[lang]}
               </h3>
               <p className="text-[11px] text-slate-500 leading-snug">
-                {translate.underThreshold[lang]}
+                {translate.sousSeuil[lang](articlesSousSeuil.length)}
               </p>
               <button 
                 onClick={() => onSelectTab("stock")}
@@ -294,44 +218,44 @@ export default function DashboardOverview({
             </div>
           </div>
 
-          {/* Card 2: Réceptions de commandes */}
+          {/* Carte 2 : Affectations actives */}
           <div className="bg-slate-50/40 rounded-xl border border-slate-200/60 p-3.5 flex items-start gap-4 hover:bg-slate-50 transition">
             <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-200/50 shrink-0">
-              <Truck size={16} />
+              <FileCheck2 size={16} />
             </div>
             <div className="space-y-1">
               <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 leading-none">
-                <span className="text-indigo-600 font-black">3</span> {translate.receptionsCount[lang]}
+                <span className="text-indigo-600 font-black">{affectationsActives.length}</span> {translate.affectationsCount[lang]}
               </h3>
               <p className="text-[11px] text-slate-500 leading-snug">
-                {translate.receptionsDesc[lang]}
+                {translate.affectationsDesc[lang]}
               </p>
               <button 
-                onClick={() => onSelectTab("orders")}
+                onClick={() => onSelectTab("assignments")}
                 className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5 pt-1.5 transition cursor-pointer"
               >
-                {translate.receiveBtn[lang]} <ArrowRight size={10} />
+                {translate.viewBtn[lang]} <ArrowRight size={10} />
               </button>
             </div>
           </div>
 
-          {/* Card 3: Validations budgétaires */}
+          {/* Carte 3 : Fournisseurs à risque */}
           <div className="bg-slate-50/40 rounded-xl border border-slate-200/60 p-3.5 flex items-start gap-4 hover:bg-slate-50 transition">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200/50 shrink-0">
               <PackageCheck size={16} />
             </div>
             <div className="space-y-1">
               <h3 className="text-xs font-black text-slate-800 flex items-center gap-1.5 leading-none">
-                <span className="text-emerald-600 font-black">{urgentApprovalsCountDb || 2}</span> {translate.approvalsCount[lang]}
+                <span className="text-emerald-600 font-black">{fournisseursARisque.length}</span> {translate.fournisseursCount[lang]}
               </h3>
               <p className="text-[11px] text-slate-500 leading-snug">
-                {translate.approvalsDesc[lang]}
+                {translate.fournisseursDesc[lang]}
               </p>
               <button 
-                onClick={() => onSelectTab("orders")}
+                onClick={() => onSelectTab("suppliers")}
                 className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-0.5 pt-1.5 transition cursor-pointer"
               >
-                {translate.approveBtn[lang]} <ArrowRight size={10} />
+                {translate.viewBtn[lang]} <ArrowRight size={10} />
               </button>
             </div>
           </div>
@@ -340,67 +264,67 @@ export default function DashboardOverview({
 
       </div>
 
-      {/* 4. FOUR HIGHLIGHT KEY STATS CARDS */}
+      {/* 4. QUATRE CARTES D'INDICATEURS CLÉS */}
       <div id="visual-stats-row" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
         
-        {/* Card 1: Active Requests */}
+        {/* Carte 1 : Articles référencés */}
         <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-emerald-500 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm relative overflow-hidden">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.demandsActive[lang]}</p>
-              <h3 className="text-3xl font-black text-slate-800 tracking-tight mt-2" id="kpi-active-requests-value">
-                {isReplica ? replicaKPIs.activeRequests : (purchaseOrders.length + 10)}
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.articlesTotal[lang]}</p>
+              <h3 className="text-3xl font-black text-slate-800 tracking-tight mt-2" id="kpi-stock-items-value">
+                {stockItems.length}
               </h3>
               <p className="text-[11px] text-slate-500 font-medium mt-1">
-                {isReplica ? replicaKPIs.activeRequestsInProg : pendingPOsDb.length + 5} {translate.inProgress[lang]}
+                {quantiteTotale} {translate.unitesEnStock[lang]}
               </p>
             </div>
             <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
-              <FileCheck2 size={18} />
+              <Boxes size={18} />
             </div>
           </div>
           
           <div className="flex items-center gap-1.5 mt-4 pt-4 border-t border-slate-100 text-[10.5px] font-bold">
             <span className="bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded border border-slate-200 flex items-center gap-1">
               <CheckCircle2 size={12} className="text-emerald-600" />
-              Demandes d'achats enregistrées
+              Inventaire matériel à jour
             </span>
           </div>
         </div>
 
-        {/* Card 2: Pending Validations */}
-        <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-slate-400 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm">
+        {/* Carte 2 : Affectations actives */}
+        <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-indigo-500 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.demandsPending[lang]}</p>
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.affectationsActives[lang]}</p>
               <h3 className="text-3xl font-black text-slate-700 mt-2">
-                {isReplica ? replicaKPIs.pendingValidations : urgentApprovalsCountDb}
+                {affectationsActives.length}
               </h3>
               <p className="text-[11.5px] text-emerald-600 font-extrabold mt-1 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                {translate.allValidated[lang]}
+                {stockMovements.filter((m) => m.type === "Sortie Affectation").length} sorties enregistrées
               </p>
             </div>
-            <div className="p-2.5 bg-slate-50 text-slate-500 rounded-xl border border-slate-150">
+            <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
               <Clock size={18} />
             </div>
           </div>
           
           <div className="mt-4 pt-4 border-t border-slate-100 text-[10px] text-slate-400 font-medium">
-            Tous les engagements sont sécurisés
+            Décharges & restitutions suivies dans le temps
           </div>
         </div>
 
-        {/* Card 3: Total Estimated Amount in MAD */}
+        {/* Carte 3 : Valeur du parc */}
         <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-cyan-500 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest leading-none">{translate.estimatedTotal[lang]}</p>
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest leading-none">{translate.valeurParc[lang]}</p>
               <h3 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight mt-2.5">
-                {isReplica ? "139 064 MAD" : formatMAD(totalSpendDb)}
+                {formatMAD(valeurTotaleParc)}
               </h3>
               <p className="text-[10.5px] text-slate-500 font-semibold mt-1">
-                {isReplica ? "108 045 MAD en cours" : `${formatMAD(Math.round(totalSpendDb * 0.7))} ${translate.inProgress[lang]}`}
+                Valeur cumulée des articles en stock
               </p>
             </div>
             <div className="p-2.5 bg-cyan-50 text-cyan-600 rounded-xl border border-cyan-100">
@@ -409,119 +333,111 @@ export default function DashboardOverview({
           </div>
           
           <div className="flex flex-wrap items-center gap-1.5 mt-4 pt-4 border-t border-slate-100 text-[9px] sm:text-[10px] font-bold">
-            <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-100">
-              Commandé: {isReplica ? "137 534 MAD" : formatMAD(totalSpentByApprovedDb)}
-            </span>
             <span className="bg-indigo-50 text-indigo-800 px-1.5 py-0.5 rounded border border-indigo-100">
-              Réceptionné: {isReplica ? "34 919 MAD" : formatMAD(Math.round(totalSpentByApprovedDb * 0.25))}
+              {repartitionCategories.length} catégories
+            </span>
+            <span className="bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-100">
+              {vendors.length} fournisseurs
             </span>
           </div>
         </div>
 
-        {/* Card 4: Waiting for Receipts */}
-        <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-indigo-500 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm">
+        {/* Carte 4 : Utilisateurs */}
+        <div className="bg-white rounded-2xl border border-slate-250 border-l-[5px] border-l-purple-500 p-5 shadow-xs transition-all hover:translate-y-[-2px] hover:shadow-sm">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.receptionsAwaiting[lang]}</p>
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{translate.utilisateursCount[lang]}</p>
               <h3 className="text-3xl font-black text-slate-850 mt-2">
-                {isReplica ? replicaKPIs.pendingReceipts : 3}
+                {users.length}
               </h3>
               <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                {isReplica ? replicaKPIs.pendingReceipts : 3} {translate.deliveriesToProcess[lang]}
+                {users.filter((u) => u.status === "Actif").length} comptes actifs
               </p>
             </div>
-            <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
-              <Truck size={18} />
+            <div className="p-2.5 bg-purple-50 text-purple-600 rounded-xl border border-purple-100">
+              <Users2 size={18} />
             </div>
           </div>
           
           <div className="flex items-center gap-1.5 mt-4 pt-4 border-t border-slate-100 text-[10.5px] font-bold">
             <span className="bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded border border-slate-200">
-              Livraisons fournisseurs en cours
+              Rôles & habilitations gérés (RBAC)
             </span>
           </div>
         </div>
 
       </div>
 
-      {/* 5. TABLE: DERNIÈRES DEMANDES D'ACHATS (DA) & ENGAGEMENTS */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" id="demands-table-canvas">
+      {/* 5. TABLEAU : DERNIERS MOUVEMENTS DE MATÉRIEL */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" id="movements-table-canvas">
         <div className="bg-slate-50/70 px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
             <span className="text-xs font-black text-slate-700 uppercase tracking-wider">
-              {translate.latestDemands[lang]}
+              {translate.derniersMouvements[lang]}
             </span>
           </div>
           <button 
-            onClick={() => onSelectTab("orders")}
+            onClick={() => onSelectTab("stock")}
             className="text-xs text-indigo-600 font-extrabold hover:text-indigo-800 transition flex items-center gap-1 cursor-pointer"
           >
             {lang === "FR" ? "Accéder au registre complet →" : "View full registry →"}
           </button>
         </div>
 
-        {/* Demands table lists */}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 text-[10px] font-black text-slate-500 uppercase tracking-wider border-b border-slate-150">
-                <th className="py-3 px-4">{translate.numDa[lang]}</th>
-                <th className="py-3 px-4">{translate.requester[lang]}</th>
-                <th className="py-3 px-4">{translate.supplier[lang]}</th>
-                <th className="py-3 px-4">{translate.phaseStatut[lang]}</th>
-                <th className="py-3 px-4 text-right">{translate.amount[lang]}</th>
-                <th className="py-3 px-4 text-center">{translate.date[lang]}</th>
+                <th className="py-3 px-4">{translate.colArticle[lang]}</th>
+                <th className="py-3 px-4">{translate.colType[lang]}</th>
+                <th className="py-3 px-4 text-right">{translate.colQuantite[lang]}</th>
+                <th className="py-3 px-4">{translate.colAuteur[lang]}</th>
+                <th className="py-3 px-4 text-center">{translate.colDate[lang]}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
-              {(isReplica ? replicaDemandsList : liveSortedPOs.slice(0, 6)).map((item, idx) => {
-                const idVal = "id" in item ? item.id : `DA-2026-00${23 - idx}`;
-                const requesterVal = "requester" in item ? item.requester : (item.requester || "Zakaria Radouane");
-                const supplierVal = "supplier" in item ? item.supplier : item.vendorName;
-                const rawStatus = "status" in item ? item.status : item.status;
-                const finalStatus = lang === "FR" ? rawStatus : ("statusEN" in item ? item.statusEN : rawStatus);
-                const stepsCount = "steps" in item ? item.steps : (rawStatus === "Approved" ? 4 : rawStatus === "Fulfilled" ? 5 : 3);
-                const totalSteps = "totalSteps" in item ? item.totalSteps : 5;
-                const amountVal = "amount" in item ? item.amount : formatMAD(item.amount);
-                const dateVal = "date" in item ? item.date : new Date(item.createdDate).toLocaleDateString("fr-FR", {day:"2-digit", month:"short"});
-
-                let badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200 border";
-                let stepColor = "bg-emerald-500";
-
-                if (rawStatus.toLowerCase().includes("commandée") || rawStatus.toLowerCase().includes("pending")) {
-                  badgeClass = "bg-sky-50 text-sky-800 border-sky-200 border";
-                  stepColor = "bg-sky-500";
-                } else if (rawStatus.toLowerCase().includes("réc. complète") || rawStatus.toLowerCase().includes("fulfilled")) {
-                  badgeClass = "bg-emerald-600 text-white font-semibold";
-                  stepColor = "bg-emerald-600";
+              {stockMovements.slice(0, 8).map((m) => {
+                let badgeClass = "bg-sky-50 text-sky-800 border-sky-200 border";
+                if (m.type === "Sortie Affectation") {
+                  badgeClass = "bg-indigo-50 text-indigo-800 border-indigo-200 border";
+                } else if (m.type === "Mise au Rebut") {
+                  badgeClass = "bg-rose-50 text-rose-800 border-rose-200 border";
+                } else if (m.type === "Retour Stock") {
+                  badgeClass = "bg-emerald-50 text-emerald-800 border-emerald-200 border";
                 }
 
                 return (
-                  <tr key={idVal} className="hover:bg-slate-50/60 transition">
-                    <td className="py-3.5 px-4 font-black text-slate-900">{idVal}</td>
-                    <td className="py-3.5 px-4 font-semibold text-slate-600 leading-tight">
-                      {requesterVal}
+                  <tr key={m.id} className="hover:bg-slate-50/60 transition">
+                    <td className="py-3.5 px-4">
+                      <p className="font-black text-slate-900 leading-tight">{m.itemName}</p>
+                      {"reference" in m && m.reference && (
+                        <p className="text-[10px] text-slate-400 font-mono">{m.reference}</p>
+                      )}
                     </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-700 uppercase tracking-wide">
-                      {supplierVal}
-                    </td>
-                    <td className="py-3.5 px-4 max-w-[200px]">
+                    <td className="py-3.5 px-4 max-w-[220px]">
                       <span className={`text-[9.5px] px-2.5 py-0.5 rounded-full font-black ${badgeClass}`}>
-                        {finalStatus}
+                        {m.type}
                       </span>
-                      <SegmentedProgress current={stepsCount} total={totalSteps} colorClass={stepColor} />
                     </td>
                     <td className="py-3.5 px-4 text-right font-black text-slate-900 text-sm">
-                      {typeof amountVal === "number" ? formatMAD(amountVal) : amountVal}
+                      {m.quantity}
                     </td>
-                    <td className="py-3.5 px-4 text-slate-400 text-center font-medium">{dateVal}</td>
+                    <td className="py-3.5 px-4 font-semibold text-slate-600 leading-tight">
+                      {m.performedBy}
+                      {m.recipient && (
+                        <p className="text-[10px] text-slate-400">→ {m.recipient}</p>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-400 text-center font-medium">
+                      {new Date(m.date).toLocaleDateString("fr-FR", {day:"2-digit", month:"short", year:"numeric"})}
+                    </td>
                   </tr>
                 );
               })}
-              {(!isReplica && purchaseOrders.length === 0) && (
+              {stockMovements.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                  <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
                     {translate.noData[lang]}
                   </td>
                 </tr>
@@ -531,17 +447,17 @@ export default function DashboardOverview({
         </div>
       </div>
 
-      {/* 6. MONTHLY SOURCING TREND GRAPH (MAD) & DEPARTMENTAL BUDGETS */}
+      {/* 6. GRAPHIQUE DES MOUVEMENTS & RÉPARTITION PAR CATÉGORIE */}
       <div id="graph-panel-container" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left main area chart */}
+        {/* Graphique principal */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
           <div>
             <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
               <div>
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5" id="monthly-evolution-title">
                   <span className="w-1.5 h-3 bg-indigo-600 rounded-xs inline-block"></span>
-                  {translate.monthlyEvolution[lang]}
+                  {translate.evolutionMouvements[lang]}
                 </h3>
                 <p className="text-[11px] text-slate-400 font-semibold mt-1">
                   {translate.chartSub[lang]}
@@ -550,17 +466,16 @@ export default function DashboardOverview({
 
               <div className="flex items-center gap-1.5 text-[10px] font-bold">
                 <span className="bg-emerald-50 text-emerald-800 px-3 py-1 border border-emerald-200 rounded-lg">
-                  Montants en Dirhams (MAD)
+                  Volume en unités
                 </span>
               </div>
             </div>
 
-            {/* Chart Canvas in MAD */}
             <div className="h-60 mt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={finalChartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                <AreaChart data={chartData.length > 0 ? chartData : [{ name: "—", quantite: 0 }]} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <defs>
-                    <linearGradient id="gradientSourcingChart" x1="0" y1="0" x2="0" y2="1">
+                    <linearGradient id="gradientStockChart" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#059669" stopOpacity={0.3}/>
                       <stop offset="95%" stopColor="#059669" stopOpacity={0}/>
                     </linearGradient>
@@ -572,19 +487,18 @@ export default function DashboardOverview({
                     fontSize={11} 
                     tickLine={false} 
                     axisLine={false} 
-                    tickFormatter={(val) => `${Math.round(val / 1000)}k MAD`}
                   />
                   <Tooltip 
-                    formatter={(val: any) => [`${parseFloat(val).toLocaleString()} MAD`, lang === "FR" ? "Volume d'engagements" : "PR Amount"]}
+                    formatter={(val: any) => [`${parseFloat(val).toLocaleString()} unités`, lang === "FR" ? "Volume mouvementé" : "Moved Volume"]}
                     contentStyle={{ borderRadius: "12px", border: "1px solid #E2E8F0" }}
                   />
-                  <Area type="monotone" dataKey="amount" stroke="#059669" strokeWidth={3} fillOpacity={1} fill="url(#gradientSourcingChart)" />
+                  <Area type="monotone" dataKey="quantite" stroke="#059669" strokeWidth={3} fillOpacity={1} fill="url(#gradientStockChart)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Performance scorecard strip */}
+          {/* Bandeau indicateurs */}
           <div className="bg-slate-50 border border-slate-200/60 p-3 rounded-xl mt-5 flex flex-wrap items-center justify-between gap-4">
             <span className="text-[10px] font-black text-indigo-950 uppercase tracking-widest flex items-center gap-1 shrink-0">
               <TrendingUp size={12} className="text-emerald-500" /> {translate.statsHeader[lang]} :
@@ -592,52 +506,51 @@ export default function DashboardOverview({
 
             <div className="flex flex-wrap items-center gap-6 text-xs font-semibold">
               <div className="flex items-center gap-1.5 text-slate-600">
-                <span className="text-slate-400 font-extrabold">{translate.treatmentRate[lang]} :</span>
-                <span className="text-emerald-700 font-black" id="treatment-rate-stat">57%</span>
+                <span className="text-slate-400 font-extrabold">{translate.tauxAffectation[lang]} :</span>
+                <span className="text-emerald-700 font-black" id="allocation-rate-stat">{tauxAffectation}%</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-600">
-                <span className="text-slate-400 font-extrabold">{translate.avgTime[lang]} :</span>
-                <span className="text-emerald-700 font-black" id="avg-time-stat">2 j</span>
+                <span className="text-slate-400 font-extrabold">{translate.articlesCritiques[lang]} :</span>
+                <span className={`font-black ${articlesSousSeuil.length > 0 ? "text-rose-600" : "text-emerald-700"}`} id="critical-items-stat">
+                  {articlesSousSeuil.length}
+                </span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-600">
-                <span className="text-slate-400 font-extrabold">{translate.globalScore[lang]} :</span>
-                <span className="text-indigo-700 font-black" id="global-score-stat">83/100</span>
+                <span className="text-slate-400 font-extrabold">{translate.scoreFournisseurs[lang]} :</span>
+                <span className="text-indigo-700 font-black" id="vendor-score-stat">{scoreMoyenFournisseurs}/100</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right side component: Department allocation budgets */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between" id="right-side-budget-caps">
+        {/* Panneau latéral : valeur par catégorie */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between" id="right-side-category-breakdown">
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <Landmark className="text-indigo-600" size={16} />
+              <Layers className="text-indigo-600" size={16} />
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest leading-none">
-                {lang === "FR" ? "Budgets par Direction (MAD)" : "Departmental Budget Caps (MAD)"}
+                {translate.repartitionCategorie[lang]}
               </h3>
             </div>
             
             <div className="space-y-4 pt-1.5">
-              {budgets.map((b) => {
-                const isOver = b.spent > b.allocated;
-                const pct = Math.min(100, Math.round((b.spent / b.allocated) * 100));
+              {repartitionCategories.map(({ categorie, valeur }) => {
+                const pct = valeurTotaleParc > 0 ? Math.max(2, Math.round((valeur / valeurTotaleParc) * 100)) : 0;
 
                 return (
-                  <div key={b.name} className="space-y-2">
+                  <div key={categorie} className="space-y-2">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-700 select-all">{b.name}</span>
+                      <span className="font-bold text-slate-700 select-all">{categorie}</span>
                       <span className="text-slate-500 font-medium">
-                        <strong className={isOver ? "text-red-600" : "text-slate-900 font-bold"}>
-                          {b.spent.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </strong>{" "}
-                        / {b.allocated.toLocaleString(undefined, { maximumFractionDigits: 0 })} MAD ({pct}%)
+                        <strong className="text-slate-900 font-bold">{formatMAD(valeur)}</strong>{" "}
+                        ({pct}%)
                       </span>
                     </div>
 
                     <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden flex">
                       <div 
                         className={`h-full rounded-full transition-all duration-500 ${
-                          isOver ? "bg-red-500 animate-pulse" : pct > 85 ? "bg-amber-500" : "bg-indigo-600"
+                          pct > 85 ? "bg-amber-500" : "bg-indigo-600"
                         }`}
                         style={{ width: `${pct}%` }}
                       ></div>
@@ -645,27 +558,23 @@ export default function DashboardOverview({
                   </div>
                 );
               })}
+              {repartitionCategories.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-6">{translate.noData[lang]}</p>
+              )}
             </div>
           </div>
 
-          {/* Quick link button to switch to orders */}
+          {/* Lien rapide vers le stock */}
           <button 
-            onClick={() => onSelectTab("orders")}
+            onClick={() => onSelectTab("stock")}
             className="w-full mt-6 bg-slate-100 border border-slate-200 text-slate-700 font-bold text-xs py-2.5 rounded-xl hover:bg-slate-200/70 transition flex items-center justify-center gap-2 cursor-pointer"
           >
-            <span>{lang === "FR" ? "Émettre une demande d'achat (DA)" : "Issue Purchase Order (DA)"}</span>
+            <span>{lang === "FR" ? "Gérer le stock IT & matériels" : "Manage IT Stock & Hardware"}</span>
             <ArrowRight size={14} />
           </button>
         </div>
 
       </div>
-
-      {/* 7. COMPOSANT RECHARTS : RÉPARTITION DÉPENSES RÉELLES VS BUDGETS PRÉVISIONNELS (MAD) */}
-      <BudgetSpendVisualizer
-        budgets={budgets}
-        purchaseOrders={purchaseOrders}
-        onSelectTab={onSelectTab}
-      />
 
     </div>
   );

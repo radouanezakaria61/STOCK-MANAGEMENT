@@ -1,9 +1,8 @@
 import { Prisma, ArticleStock } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { introuvable, requeteInvalide } from "../lib/erreurs.js";
-import { dateDuJour, dateFuture, numeroSuivant } from "../lib/ids.js";
+import { dateDuJour, numeroSuivant } from "../lib/ids.js";
 import { enNombre } from "../lib/serialisation.js";
-import { marquerCommeLivre } from "./bons-commande.service.js";
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -92,8 +91,6 @@ export interface EntreeArticle {
   unitPriceMAD?: unknown;
   location?: string;
   status?: string;
-  purchaseOrderId?: string;
-  purchaseOrderTitle?: string;
   vendorName?: string;
   notes?: string;
   performedBy?: string;
@@ -111,8 +108,6 @@ export async function creerArticle(data: EntreeArticle) {
     unitPriceMAD,
     location,
     status,
-    purchaseOrderId,
-    purchaseOrderTitle,
     vendorName,
     notes,
     performedBy
@@ -124,17 +119,6 @@ export async function creerArticle(data: EntreeArticle) {
 
   const qty = parseInt(String(quantity)) || 1;
   const unitPrice = parseFloat(String(unitPriceMAD)) || 0;
-
-  // Le bon de commande peut être désigné par UUID ou par référence DA-…
-  let bcId: string | null = null;
-  if (purchaseOrderId) {
-    const bc = await prisma.bonCommande.findFirst({
-      where: { OR: [{ id: purchaseOrderId }, { reference: purchaseOrderId }] },
-      select: { id: true }
-    });
-    if (!bc) throw introuvable("Demande d'achat introuvable.");
-    bcId = bc.id;
-  }
 
   const article = await prisma.$transaction(async (tx) => {
     const numeros = await prochainsNumerosArticle(tx);
@@ -156,8 +140,6 @@ export async function creerArticle(data: EntreeArticle) {
         totalValueMAD: qty * unitPrice,
         location: location || "Magasin Central IT (Casablanca)",
         status: status || "En Stock",
-        purchaseOrderId: bcId,
-        purchaseOrderTitle: purchaseOrderTitle || null,
         vendorName: vendorName || null,
         purchaseDate: new Date(),
         notes: notes || ""
@@ -174,7 +156,6 @@ export async function creerArticle(data: EntreeArticle) {
         quantity: qty,
         performedBy: performedBy || "Administrateur Système",
         date: new Date(),
-        purchaseOrderId: bcId,
         notes: "Création et entrée initiale en stock."
       }
     });
@@ -348,116 +329,6 @@ export async function enregistrerMouvement(idOuReference: string, data: EntreeMo
   return {
     message: `Mouvement de stock "${type}" enregistré.`,
     data: resultat
-  };
-}
-
-// ── Import / réception depuis un bon de commande ─────────────────────
-
-const REGLES_CATEGORIE: Array<[RegExp, string]> = [
-  [/portable|laptop|thinkpad|macbook/, "Laptops & Portables"],
-  [/écran|moniteur|poste|station/, "Postes Fixes & Écrans"],
-  [/serveur|stockage|san|nas/, "Serveurs & Stockage"],
-  [/switch|routeur|câblage|réseau|firewall/, "Réseau & Sécurité"],
-  [/toner|cartouche|papier|fourniture/, "Consommables & Pièces"],
-  [/licence|logiciel|saas|cloud/, "Licences & Logiciels"]
-];
-
-function deduireCategorie(desc: string): string {
-  const lowerDesc = desc.toLowerCase();
-  for (const [regex, categorie] of REGLES_CATEGORIE) {
-    if (regex.test(lowerDesc)) return categorie;
-  }
-  return "Périphériques & Accessoires";
-}
-
-export interface LigneBonImport {
-  desc?: string;
-  qty?: unknown;
-  unitPrice?: unknown;
-}
-
-export async function importerDepuisBonCommande(data: {
-  purchaseOrderId?: string;
-  performedBy?: string;
-  location?: string;
-}) {
-  const { purchaseOrderId, performedBy, location } = data;
-
-  const po = await prisma.bonCommande.findFirst({
-    where: { OR: [{ id: purchaseOrderId ?? "" }, { reference: purchaseOrderId ?? "" }] },
-    include: { items: true }
-  });
-  if (!po) throw introuvable("Demande d'achat introuvable.");
-
-  const poItems =
-    po.items && po.items.length > 0
-      ? po.items.map((i) => ({ desc: i.desc, qty: i.qty, unitPrice: enNombre(i.unitPrice) }))
-      : [{ desc: po.title, qty: 1, unitPrice: enNombre(po.amount) }];
-
-  const crees = await prisma.$transaction(async (tx) => {
-    let numero = numeroSuivant(await referencesArticlesExistantes(tx), /^STK-(\d+)$/);
-    const creesLocaux: ArticleStock[] = [];
-
-    for (let idx = 0; idx < poItems.length; idx++) {
-      const poItem = poItems[idx]!;
-      const qty = parseInt(String(poItem.qty)) || 1;
-      const unitPrice = parseFloat(String(poItem.unitPrice)) || 0;
-      const nouvelleRef = `STK-${String(numero).padStart(3, "0")}`;
-      const assetTag = `IT-AST-${1000 + numero}`;
-      numero++;
-
-      const newItem = await tx.articleStock.create({
-        data: {
-          reference: nouvelleRef,
-          assetTag,
-          name: poItem.desc ?? po.title,
-          category: deduireCategorie(poItem.desc ?? po.title),
-          brand: po.vendorName?.split(" ")[0] || "Fournisseur",
-          model: "Standard Entreprise",
-          serialNumber: `SN-${Date.now().toString().slice(-5)}${idx}`,
-          quantity: qty,
-          availableQty: qty,
-          allocatedQty: 0,
-          minThreshold: Math.max(1, Math.round(qty * 0.2)),
-          unitPriceMAD: unitPrice,
-          totalValueMAD: qty * unitPrice,
-          location: location || "Magasin Central IT (Casablanca)",
-          status: "En Stock",
-          purchaseOrderId: po.id,
-          purchaseOrderTitle: po.title,
-          vendorName: po.vendorName,
-          purchaseDate: po.deliveryDate ?? new Date(),
-          warrantyExpiry: dateFuture(365 * 3),
-          notes: `Intégré depuis le Bon de Commande ${po.reference}. Fournisseur : ${po.vendorName}.`
-        }
-      });
-      creesLocaux.push(newItem);
-
-      await tx.mouvementStock.create({
-        data: {
-          reference: await nouvelleReferenceMouvement(tx),
-          stockItemId: newItem.id,
-          itemName: poItem.desc ?? po.title,
-          type: "Entrée Achat",
-          quantity: qty,
-          performedBy: performedBy || "Service Réception Achats",
-          date: new Date(),
-          purchaseOrderId: po.id,
-          notes: `Réception conforme depuis la DA ${po.reference}.`
-        }
-      });
-    }
-
-    return creesLocaux;
-  });
-
-  // Marquer le bon de commande comme livré
-  await marquerCommeLivre(po.id);
-
-  return {
-    status: 201 as const,
-    message: `${crees.length} article(s) intégré(s) avec succès dans le stock IT depuis ${po.reference}.`,
-    data: crees
   };
 }
 

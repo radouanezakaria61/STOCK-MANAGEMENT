@@ -1,27 +1,3 @@
-export interface POItem {
-  desc: string;
-  qty: number;
-  unitPrice: number;
-  total: number;
-}
-
-export interface PurchaseOrder {
-  id: string;
-  title: string;
-  vendorId: string;
-  vendorName: string;
-  amount: number;
-  category: string;
-  department: string;
-  requester: string;
-  status: "Draft" | "Pending Approval" | "Approved" | "Fulfilled" | "Declined" | "Cancelled";
-  createdDate: string;
-  deliveryDate: string;
-  items: POItem[];
-  auditScore: number;
-  notes: string;
-}
-
 export interface Vendor {
   id: string;
   name: string;
@@ -30,53 +6,8 @@ export interface Vendor {
   category: string;
   qualityScore: number;
   onTimeDelivery: number;
-  activeContracts: number;
-  totalSpend: number;
   riskLevel: "Low" | "Medium" | "High";
   status: "Preferred" | "Approved" | "On Probation";
-}
-
-export interface Budget {
-  name: string;
-  allocated: number;
-  spent: number;
-}
-
-export interface Bid {
-  id: string;
-  vendorName: string;
-  unitPrice: number;
-  totalPrice: number;
-  leadTimeDays: number;
-  warrantyYears: number;
-  complianceLevel: string;
-  riskFlags: string[];
-  notes: string;
-}
-
-export interface RFQComparisonCase {
-  id: string;
-  title: string;
-  department: string;
-  targetBudget: number;
-  itemsRequired: string;
-  bids: Bid[];
-}
-
-export interface AICopilotResult {
-  recommendedVendor: string;
-  recommendationReasoning: string;
-  supplierComparison: {
-    vendorName: string;
-    pros: string;
-    cons: string;
-  }[];
-  riskAssessment: {
-    riskTitle: string;
-    severity: "Low" | "Medium" | "High";
-    riskExplanation: string;
-  }[];
-  negotiationPlaybook: string[];
 }
 
 export type UserRole = "ADMIN" | "PROCUREMENT_MANAGER" | "BUYER" | "AUDITOR";
@@ -152,8 +83,6 @@ export interface ITStockItem {
   totalValueMAD: number;
   location: string;
   status: StockStatus;
-  purchaseOrderId?: string;
-  purchaseOrderTitle?: string;
   vendorName?: string;
   purchaseDate?: string;
   assignedTo?: StockAssignment;
@@ -163,6 +92,7 @@ export interface ITStockItem {
 
 export interface StockMovement {
   id: string;
+  reference?: string;
   stockItemId: string;
   itemName: string;
   type: "Entrée Achat" | "Sortie Affectation" | "Retour Stock" | "Ajustement Inventaire" | "Mise au Rebut";
@@ -171,7 +101,6 @@ export interface StockMovement {
   recipient?: string;
   department?: string;
   date: string;
-  purchaseOrderId?: string;
   notes?: string;
 }
 
@@ -282,4 +211,3 @@ export interface MaterialAssignment {
   notes?: string;
   returnRecord?: MaterialReturnRecord;
 }
-

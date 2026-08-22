@@ -1,7 +1,7 @@
 # IT Stock Manager — Plan de convergence
 
 > Comment faire converger le code restructuré (Express + Prisma + PostgreSQL) vers l'architecture validée en Phase 1, avec un périmètre recentré sur la **gestion de parc IT**.
-> Version 1.0 — 21 août 2026 · Fait suite au `RESTRUCTURE-REPORT.md` du 22 août 2026 et au document `01-architecture.md`.
+> Version 1.1 — 22 août 2026 · §1.1 révisée : suppression des modules achats au lieu du gel · Fait suite au `RESTRUCTURE-REPORT.md` du 22 août 2026 et au document `01-architecture.md`.
 
 ---
 
@@ -32,31 +32,31 @@ Le recouvrement réel se limite à quatre notions : `Fournisseur`, `ArticleStock
 
 Autrement dit : la restructuration a produit une bonne fondation technique (couches, services, Prisma, PostgreSQL), mais le **domaine métier reste à construire**. C'est une bonne nouvelle sur un point : la partie difficile à rattraper — sortir du monolithe en mémoire — est déjà faite.
 
-### 1.1 Ce que « Parc IT uniquement » implique — et ce que je vous déconseille d'en faire
+### 1.1 Décision du 22 août : suppression, et non gel, des modules achats
 
-Vous avez choisi de recentrer sur le parc IT. **Je ne recommande pas de supprimer le code achats pour autant**, pour trois raisons concrètes :
-
-1. Le rapport mentionne un flux `import-po` qui crée des articles de stock **avec déduction de catégorie et dates de garantie**. C'est exactement le canal d'entrée en stock dont la Phase 1 a besoin (§6.3). Le supprimer, c'est se priver du seul point d'entrée automatisé qui existe déjà.
-2. `Fournisseur` est partagé entre les deux périmètres — la Phase 1 en a besoin pour les équipements, les licences et la maintenance.
-3. Supprimer du code qui fonctionne est irréversible ; le geler ne l'est pas.
-
-**Ce que je propose à la place :** un gel explicite.
+**Cette section remplace la recommandation de gel de la version 1.0.** J'avais proposé de geler les modules achats plutôt que de les supprimer ; vous avez tranché pour la suppression. La décision vous appartient et elle se défend : un dépôt sans code mort est plus simple à faire évoluer, et l'historique git conserve tout de toute façon.
 
 | Modèle / module | Décision | Justification |
 |---|---|---|
-| `Fournisseur` | **Conservé et étendu** | Requis par la Phase 1 (équipements, licences, maintenance) |
-| `BonCommande` + `LigneCommande` | **Gelé, conservé** | Devient le canal d'entrée en stock (§6.3). Aucun développement nouveau, routes maintenues |
-| `Budget` | **Gelé** | Hors périmètre. Table conservée, routes désactivées par indicateur de configuration |
-| `AppelOffres` + `Offre` | **Gelé** | Idem |
-| `ia.service.ts` (Gemini) | **Gelé** | Sert uniquement l'analyse d'offres. Aucune dépendance du parc IT |
-| `Utilisateur` | **Refondu** | Devient le socle de l'authentification et du RBAC |
-| `ArticleStock` | **Scindé** | Voir §2.2 — c'est le point le plus délicat |
+| `BonCommande` + `LigneCommande` | **Supprimé** | Hors périmètre |
+| `Budget` | **Supprimé** | Hors périmètre |
+| `AppelOffres` + `Offre` | **Supprimé** | Hors périmètre |
+| `ia.service.ts` + client Gemini | **Supprimé** | Ne servait que l'analyse d'offres |
+| `Fournisseur` | **Conservé et étendu** | **Requis par le parc IT** : équipements, licences, maintenance. Ne pas le supprimer avec le reste |
+| `Utilisateur` | **Refondu** | Socle de l'authentification et du RBAC |
+| `ArticleStock` | **Scindé** | Voir §2.2 |
 | `MouvementStock` | **Étendu** | FK, types complets, statut avant/après |
 | `Affectation` + `LigneAffectation` + `RetourAffectation` | **Refondus** | Voir §2.3 |
 
-> **Gel ≠ dispense.** Un module gelé ne reçoit plus de fonctionnalités, mais ses tables suivent les mêmes règles de typage que les autres. Le chantier 1 migre **tout le schéma**, y compris `BonCommande`, `Budget` et `AppelOffres` : `Float` → `Decimal`, `String` → `DateTime`, UUID, FK, `supprimeLe`, `creeLe`. Deux conventions de types dans une même base imposeraient une couche de conversion permanente à chaque frontière — et `BonCommande` alimente le stock au chantier 7, donc ses dates doivent être exploitables. Le coût aujourd'hui est nul (la base ne contient que le seed) ; il ne le sera plus jamais.
+**Trois conséquences à traiter, pas seulement des fichiers à effacer :**
 
-Le gel se matérialise par une variable `MODULES_ACTIFS="parc,stock,maintenance"` lue au démarrage : les routes des modules absents ne sont pas montées. Le code reste en place, testable, réactivable en une ligne. **Rien n'est supprimé, rien n'est perdu.**
+1. **Le canal d'entrée en stock disparaît.** Le flux `import-po` créait des articles avec déduction de catégorie et dates de garantie. Sa disparition est acceptable — le chantier 7 prévoit un écran « Réception / entrée en stock » qui le remplace — mais **entre les deux, les entrées se font à la main**. C'est le seul recul fonctionnel réel de cette décision.
+2. **`Fournisseur` porte probablement des champs alimentés par les commandes** (montant dépensé, note, historique). Privés de leur source, ils deviennent faux plutôt que vides. Ils doivent être supprimés ou repassés en saisie manuelle explicite — pas laissés en place à afficher un chiffre figé.
+3. **`GET /api/data` change de forme.** L'agrégat renvoie aujourd'hui budgets, commandes et appels d'offres ; le frontend consomme ces clés. La suppression backend et le nettoyage frontend doivent être **dans le même commit**, sinon l'application est cassée entre les deux.
+
+**Ordre impératif : la suppression passe avant le chantier 1.** Migrer les types, les clés et les contraintes de tables qu'on efface ensuite, c'est du travail jeté — et un schéma cible plus difficile à relire. L'encadré « Gel ≠ dispense » de la version 1.0 devient sans objet : il n'y a plus de module gelé, seulement des tables conservées, qui migrent toutes.
+
+Le mécanisme `MODULES_ACTIFS` mis en place au chantier 0 perd sa raison d'être pour les modules achats. Il peut être retiré, ou conservé s'il sert à autre chose — mais il ne doit pas rester à garder des routes qui n'existent plus.
 
 ---
 
@@ -79,7 +79,7 @@ flowchart LR
 
     subgraph CI["Cible — parc IT"]
         C1[Fournisseur étendu]
-        C2[Canal d'entrée en stock]
+        C2["Réception / entrée en stock<br/>à créer au chantier 7"]
         C3[User + Role + Permission<br/>+ Session]
         C4[ArticleStock quantitatif<br/>+ NiveauStock]
         C5[Equipement sérialisé<br/>+ Categorie + Modele]
@@ -89,9 +89,9 @@ flowchart LR
     end
 
     E1 --> C1
-    E2 -.gelé.-> C2
-    E3 -.gelé.-> X[hors périmètre]
-    E4 -.gelé.-> X
+    E2 -.supprimé.-> C2
+    E3 -.supprimé.-> X[supprimé du dépôt]
+    E4 -.supprimé.-> X
     E5 ==>|refonte| C3
     E6 ==>|scission| C4
     E6 ==>|scission| C5
@@ -210,7 +210,7 @@ Une règle qui rend l'ensemble fiable : **aucune fonction de service n'accepte d
 ```text
 backend/src/
 ├── routes/
-│   ├── index.ts                 # montage conditionnel selon MODULES_ACTIFS
+│   ├── index.ts                 # montage des routes du périmètre parc IT
 │   ├── auth.routes.ts           # ← nouveau
 │   ├── equipements.routes.ts    # ← nouveau
 │   ├── employes.routes.ts       # ← nouveau
@@ -219,7 +219,6 @@ backend/src/
 │   ├── stock.routes.ts          # existant, étendu
 │   ├── assignments.routes.ts    # existant, réécrit sur BonAffectation
 │   ├── vendors.routes.ts        # existant
-│   └── _geles/                  # pos, budgets, rfq, ia — montés seulement si activés
 ├── services/                    # 8 existants + ~10 nouveaux
 ├── middlewares/                 # ← nouveau : session, permission, limite-debit, erreurs
 ├── lib/
@@ -278,7 +277,7 @@ Les chantiers 6 à 9 sont **parallélisables** une fois le chantier 5 terminé :
 Aucune fonctionnalité, uniquement de quoi travailler sans risque.
 
 - Branche `convergence-parc-it`, l'état actuel reste intact sur `main`
-- `MODULES_ACTIFS` + montage conditionnel des routes ; les modules achats répondent 404 quand désactivés
+- ~~`MODULES_ACTIFS` + montage conditionnel~~ — fait au chantier 0, rendu caduc par la décision du 22 août (§1.1) : les modules achats sont supprimés, plus rien à désactiver
 - Sauvegarde `pg_dump` du jeu de démonstration
 - Retirer le mot de passe PostgreSQL du rapport versionné, le déplacer dans `.env`
 - Vérifier l'identifiant du modèle Gemini en **désactivant temporairement le repli heuristique** : si l'appel échoue, l'IA n'a jamais fonctionné et le rapport le masquait
@@ -413,7 +412,7 @@ Il n'est pas nécessaire d'attendre le chantier 11 pour utiliser l'application.
 | La sérialisation `Decimal` casse un calcul frontend | Moyenne | Sérialiseur unique et centralisé ; revue écran par écran au chantier 1 ; c'est le seul risque de régression visible |
 | Fermer l'API casse le frontend existant | Moyenne | Middleware d'abord en mode journalisation seule (on observe qui appelle quoi), bascule en refus une fois la liste vide |
 | Deux systèmes de permissions cohabitent | Moyenne | L'ancienne matrice est **supprimée** au chantier 2, pas conservée « au cas où » |
-| Les modules gelés se réveillent par accident | Faible | Montage conditionnel + test vérifiant qu'un module désactivé répond 404 |
+| Une référence orpheline aux modules supprimés subsiste (import, type, clé d'API, entrée de menu) | Élevée | `grep` exhaustif backend + frontend après suppression ; les deux `tsc --noEmit` et `npm run build` doivent passer |
 | L'ordre des chantiers glisse vers les écrans | Élevée | C'est le risque le plus banal et le plus coûteux. Les chantiers 1 à 3 ne se rattrapent pas |
 
 ---
@@ -422,7 +421,7 @@ Il n'est pas nécessaire d'attendre le chantier 11 pour utiliser l'application.
 
 Trois points que je ne trancherai pas seul :
 
-1. **Le sort des modules achats.** Je propose le gel plutôt que la suppression. Si vous savez que budgets et appels d'offres ne serviront jamais, dites-le : le code part dans `_legacy/` et l'arborescence s'allège.
+1. ~~Le sort des modules achats.~~ **Tranché le 22 août : suppression.** Voir §1.1 pour les trois conséquences à traiter.
 2. **La migration UUID.** Elle est presque gratuite maintenant, elle ne le sera plus jamais. Mais elle change les identifiants visibles dans les URL. Si vos utilisateurs ont l'habitude de `STK-001` dans l'adresse, on garde `reference` comme identifiant d'URL et l'UUID reste interne.
 3. **Le niveau d'exigence sur l'authentification.** Application interne derrière un VPN, ou accessible depuis Internet ? La réponse change la sévérité du rate limiting, la durée des sessions et la nécessité d'une double authentification.
 

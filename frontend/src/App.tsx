@@ -1,85 +1,53 @@
 import { useState, useEffect } from "react";
-import { PurchaseOrder, Vendor, Budget, RFQComparisonCase, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "./types";
+import { Vendor, AppUser, ITStockItem, StockMovement, MaterialAssignment } from "./types";
 import DashboardOverview from "./components/DashboardOverview";
-import PurchaseOrdersList from "./components/PurchaseOrdersList";
 import SuppliersDirectory from "./components/SuppliersDirectory";
-import BidEvaluator from "./components/BidEvaluator";
-import ContractPlayground from "./components/ContractPlayground";
 import UserManagement from "./components/UserManagement";
 import ITStockManagement from "./components/ITStockManagement";
 import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
 import {
   LayoutDashboard,
-  FileSpreadsheet,
   Users2,
-  BrainCircuit,
-  Scale,
-  Calendar,
   RefreshCw,
   UserCheck,
   Bell,
   BellOff,
   AlertCircle,
-  TrendingUp,
   Info,
   Shield,
-  User,
   ChevronDown,
-  Lock,
   CheckCircle2,
   Boxes,
-  FileCheck2
+  FileCheck2,
+  Calendar
 } from "lucide-react";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
 
-  // Core Sourcing States
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  // États du parc IT
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [rfqCases, setRfqCases] = useState<RFQComparisonCase[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
-
-  // IT Stock & Assignments States
   const [stockItems, setStockItems] = useState<ITStockItem[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [assignments, setAssignments] = useState<MaterialAssignment[]>([]);
 
-  // Notification Feed State in French
+  // Flux de notifications en français
   const [notifications, setNotifications] = useState<any[]>([
     {
       id: "notif-1",
-      title: "Urgent : Appel d'Offres à Réviser",
-      description: "Le dossier 'Mise à niveau Serveurs & Réseau' (Budget: 85 000 MAD) contient des alertes de conformité.",
-      timestamp: new Date(Date.now() - 1000 * 60 * 12),
-      type: "high_value_bid",
-      unread: true,
-      targetTab: "bids"
-    },
-    {
-      id: "notif-2",
-      title: "Bon de Commande Approuvé",
-      description: "La commande 'Mobilier de bureau ergonomique' a reçu la validation financière.",
-      timestamp: new Date(Date.now() - 1000 * 60 * 38),
-      type: "po_status",
-      unread: true,
-      targetTab: "orders"
-    },
-    {
-      id: "notif-3",
       title: "Alerte Stock IT Critique",
       description: "Les cartouches HP LaserJet sont sous le seuil d'alerte minimal (4 unités restantes).",
       timestamp: new Date(Date.now() - 1000 * 60 * 50),
-      type: "high_value_bid",
+      type: "alerte",
       unread: true,
       targetTab: "stock"
     },
     {
-      id: "notif-4",
+      id: "notif-2",
       title: "Nouveau Fournisseur Enregistré",
       description: "Le fournisseur 'INK SERVICES' a validé l'ensemble de ses documents de conformité.",
       timestamp: new Date(Date.now() - 1000 * 60 * 110),
@@ -91,11 +59,11 @@ export default function App() {
 
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
 
-  // Helper to add notification
+  // Helper pour ajouter une notification
   const addNotification = (
     title: string,
     description: string,
-    type: "po_status" | "high_value_bid" | "info",
+    type: "alerte" | "info",
     targetTab?: string
   ) => {
     const newNotif = {
@@ -110,46 +78,19 @@ export default function App() {
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  // 1. Fetch live consolidated sourcing & stock dataset from server on mount
+  // 1. Récupération du jeu de données consolidé du parc IT au montage
   const fetchSourcingData = async () => {
     try {
       const response = await fetch("/api/data");
       if (response.ok) {
         const payload = await response.json();
-        const { purchaseOrders, vendors, budgets, rfqComparisonPools } = payload.data;
-        setPurchaseOrders(purchaseOrders);
+        const { vendors, users, stockItems, stockMovements, assignments } = payload.data;
         setVendors(vendors);
-        setBudgets(budgets);
-        setRfqCases(rfqComparisonPools);
-      }
-
-      // Fetch users
-      const usersRes = await fetch("/api/users");
-      if (usersRes.ok) {
-        const usersPayload = await usersRes.json();
-        const userList = usersPayload.data || [];
-        setUsers(userList);
-        if (!currentUser && userList.length > 0) {
-          // Default to first user (Admin)
-          setCurrentUser(userList[0]);
-        }
-      }
-
-      // Fetch IT Stock
-      const stockRes = await fetch("/api/stock");
-      if (stockRes.ok) {
-        const stockPayload = await stockRes.json();
-        if (stockPayload.data) {
-          setStockItems(stockPayload.data.items || []);
-          setStockMovements(stockPayload.data.movements || []);
-        }
-      }
-
-      // Fetch Assignments
-      const assignRes = await fetch("/api/assignments");
-      if (assignRes.ok) {
-        const assignPayload = await assignRes.json();
-        setAssignments(assignPayload.data || []);
+        setUsers(users);
+        setCurrentUser((prev) => prev ?? users[0] ?? null);
+        setStockItems(stockItems);
+        setStockMovements(stockMovements);
+        setAssignments(assignments);
       }
     } catch (err) {
       console.error("Erreur lors de la récupération des données:", err);
@@ -162,77 +103,18 @@ export default function App() {
     fetchSourcingData();
   }, []);
 
-  // Switch session user
+  // Changement d'utilisateur de session
   const handleSwitchUser = (user: AppUser) => {
     setCurrentUser(user);
     setShowUserMenu(false);
     addNotification(
       "Session Utilisateur Active Modifiée",
-      `Vous agissez désormais sous l'identité de ${user.name} (${user.role} - Plafond: ${user.spendingLimitMAD > 0 ? user.spendingLimitMAD.toLocaleString() + " MAD" : "Sans droit"}).`,
+      `Vous agissez désormais sous l'identité de ${user.name} (${user.role}).`,
       "info"
     );
   };
 
-  // 2. Mutations POST endpoints
-  const handleCreatePO = async (poData: any) => {
-    try {
-      const response = await fetch("/api/pos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(poData),
-      });
-      if (response.ok) {
-        await fetchSourcingData();
-        addNotification(
-          "Nouvelle Demande d'Achat Créée",
-          `Une demande d'achat pour "${poData.title}" (${poData.department}) d'un montant de ${poData.amount.toLocaleString()} MAD a été enregistrée.`,
-          "po_status",
-          "orders"
-        );
-      } else {
-        const errorMsg = await response.json();
-        alert(errorMsg.error || "Échec de création du bon de commande.");
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleUpdatePOStatus = async (id: string, status: string) => {
-    try {
-      const response = await fetch(`/api/pos/${id}/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (response.ok) {
-        await fetchSourcingData();
-        
-        const statusMapFR: Record<string, string> = {
-          "Approved": "Validée",
-          "Pending Approval": "En attente",
-          "Declined": "Refusée",
-          "Fulfilled": "Réceptionnée"
-        };
-        const displayedStatus = statusMapFR[status] || status;
-
-        setPurchaseOrders((prevOrders) => {
-          const matched = prevOrders.find((po) => po.id === id);
-          const titleText = matched ? matched.title : `Commande #${id}`;
-          addNotification(
-            `Mise à jour Statut : ${displayedStatus}`,
-            `La commande "${titleText}" (${id}) est désormais marquée comme ${displayedStatus}.`,
-            "po_status",
-            "orders"
-          );
-          return prevOrders;
-        });
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
+  // 2. Mutations POST
   const handleAddVendor = async (vendorData: any) => {
     try {
       const response = await fetch("/api/vendors", {
@@ -248,6 +130,9 @@ export default function App() {
           "info",
           "suppliers"
         );
+      } else {
+        const errorMsg = await response.json();
+        alert(errorMsg.error || "Échec de création du fournisseur.");
       }
     } catch (err) {
       console.error(err);
@@ -275,58 +160,30 @@ export default function App() {
     }
   };
 
-  const handleAddRFQ = async (rfqData: any) => {
-    try {
-      const response = await fetch("/api/rfq", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rfqData),
-      });
-      if (response.ok) {
-        await fetchSourcingData();
-        const isHighValue = rfqData.targetBudget > 50000;
-        addNotification(
-          isHighValue ? "Urgent : Appel d'Offres Stratégique" : "Nouveau Dossier RFQ Créé",
-          `Le projet d'appel d'offres "${rfqData.title}" est prêt pour l'évaluation multicritère IA.`,
-          isHighValue ? "high_value_bid" : "info",
-          "bids"
-        );
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Extract unique departments for PO allocation options
-  const departments = budgets.map((b) => b.name);
-
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
       
-      {/* SIDE NAVIGATION COLLAPSIBLE PANEL */}
+      {/* PANneau LATÉRAL DE NAVIGATION REPLIABLE */}
       <aside className="w-full md:w-64 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0">
         
-        {/* Core Sidebar Header Brand */}
+        {/* En-tête de marque */}
         <div className="p-5 border-b border-slate-800 flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white text-base">
             A
           </div>
           <div>
-            <h1 className="text-xs font-bold uppercase tracking-wider text-slate-100 leading-none">Achats & Appro</h1>
+            <h1 className="text-xs font-bold uppercase tracking-wider text-slate-100 leading-none">Parc Informatique</h1>
             <p className="text-[10px] text-slate-400 mt-1">Plateforme de Gestion</p>
           </div>
         </div>
 
-        {/* Navigation Tabs Links */}
+        {/* Liens de navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1">
           {[
             { id: "dashboard", label: "Tableau de Bord", icon: LayoutDashboard },
-            { id: "orders", label: "Bons de Commande & DA", icon: FileSpreadsheet },
             { id: "stock", label: "Stock IT & Matériels", icon: Boxes },
             { id: "assignments", label: "Affectations & Décharges", icon: FileCheck2 },
             { id: "suppliers", label: "Annuaire Fournisseurs", icon: Users2 },
-            { id: "bids", label: "Évaluateur d'Offres IA", icon: BrainCircuit },
-            { id: "contracts", label: "Clauses & Contrats SLA", icon: Scale },
             { id: "users", label: "Utilisateurs & Rôles", icon: Shield },
           ].map((tab) => {
             const IconComp = tab.icon;
@@ -365,7 +222,7 @@ export default function App() {
           })}
         </nav>
 
-        {/* Bottom Metadata context */}
+        {/* Contexte métadonnées en bas */}
         <div className="p-4 border-t border-slate-800 text-[10px] text-slate-500 space-y-2">
           <div className="flex items-center gap-1.5 uppercase font-semibold">
             <UserCheck size={11} className="text-indigo-500" />
@@ -377,29 +234,26 @@ export default function App() {
             </p>
           ) : (
             <p className="leading-relaxed">
-              Connecté à la base de données cloud Firestore. Devise officielle : Dirham Marocain (MAD).
+              Connecté à la base de données PostgreSQL. Devise officielle : Dirham Marocain (MAD).
             </p>
           )}
         </div>
 
       </aside>
 
-      {/* PRIMARY VIEWS LAYOUT WRAPPER */}
+      {/* STRUCTURE PRINCIPALE DES VUES */}
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         
-        {/* UPPER STATUS BAR HEADER WITH REALTIME NOTIFICATION ALERTS & USER SESSION SWITCHER */}
+        {/* BARRE D'ÉTAT SUPÉRIEURE AVEC NOTIFICATIONS & SÉLECTEUR DE SESSION */}
         <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 relative z-30">
           <div>
             <h2 className="text-sm font-semibold text-slate-900 uppercase">
               {
                 {
-                  dashboard: "Vue d'Ensemble & Analyse des Dépenses",
-                  orders: "Suivi des Demandes d'Achats & Engagements Budgétaires",
+                  dashboard: "Vue d'Ensemble du Parc Informatique",
                   stock: "Gestion du Stock IT, Actifs & Dotations Collaborateurs",
                   assignments: "Affectations, Décharges & Restitutions de Matériel (DSI)",
                   suppliers: "Répertoire & Évaluation des Fournisseurs Partenaires",
-                  bids: "Comparaison des Offres & Audit Prédictif Gemini AI",
-                  contracts: "Générateur & Auditeur de Clauses Juridiques & SLA",
                   users: "Gestion des Utilisateurs, Rôles & Habilitations (RBAC)",
                 }[activeTab]
               }
@@ -407,7 +261,7 @@ export default function App() {
           </div>
           <div className="flex items-center flex-wrap gap-3 text-xs font-semibold text-slate-500">
             
-            {/* CURRENT USER SESSION SWITCHER & PROFILE DROPDOWN */}
+            {/* SÉLECTEUR D'UTILISATEUR & PROFIL */}
             {currentUser && (
               <div className="relative">
                 <button
@@ -448,7 +302,7 @@ export default function App() {
                   <ChevronDown size={14} className="text-slate-400" />
                 </button>
 
-                {/* USER SWITCHER DROPDOWN */}
+                {/* MENU DÉROULANT DE CHANGEMENT D'UTILISATEUR */}
                 {showUserMenu && (
                   <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 shadow-xl rounded-2xl overflow-hidden z-50 text-slate-800">
                     <div className="p-3 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-slate-100">
@@ -514,7 +368,7 @@ export default function App() {
               </div>
             )}
 
-            {/* REAL-TIME NOTIFICATION FEED BELL POPUP */}
+            {/* CLOCHE DE NOTIFICATIONS EN TEMPS RÉEL */}
             <div className="relative">
               <button
                 type="button"
@@ -532,7 +386,7 @@ export default function App() {
                 )}
               </button>
 
-              {/* DROPDOWN CONTAINER */}
+              {/* CONTENEUR DÉROULANT */}
               {showNotificationDropdown && (
                 <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white border border-slate-200 shadow-xl rounded-2xl overflow-hidden text-slate-800 z-50">
                   <div className="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
@@ -562,7 +416,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* SCROLLABLE FEED LIST */}
+                  {/* LISTE DÉFILANTE */}
                   <div className="divide-y divide-slate-100 max-h-[320px] overflow-y-auto">
                     {notifications.length === 0 ? (
                       <div className="p-8 text-center text-slate-400 space-y-2">
@@ -575,15 +429,12 @@ export default function App() {
                         let iconColor = "bg-blue-50 text-blue-600 border-blue-100";
                         let IconComp = Info;
 
-                        if (item.type === "high_value_bid") {
+                        if (item.type === "alerte") {
                           iconColor = "bg-rose-50 text-rose-600 border-rose-100";
                           IconComp = AlertCircle;
-                        } else if (item.type === "po_status") {
-                          iconColor = "bg-emerald-50 text-emerald-600 border-emerald-100";
-                          IconComp = TrendingUp;
                         }
 
-                        // safely formulate elapsed clock description
+                        // Calcul du temps écoulé
                         const minsElapsed = Math.max(1, Math.round((Date.now() - new Date(item.timestamp).getTime()) / (1000 * 60)));
                         let timeLabel = `Il y a ${minsElapsed} min`;
                         if (minsElapsed >= 60) {
@@ -594,7 +445,6 @@ export default function App() {
                           <div
                             key={item.id}
                             onClick={() => {
-                              // mark current item as read
                               setNotifications(prev =>
                                 prev.map(n => (n.id === item.id ? { ...n, unread: false } : n))
                               );
@@ -650,38 +500,29 @@ export default function App() {
           </div>
         </header>
 
-        {/* WORKSPACE CENTRAL WORKPAD SCREEN */}
+        {/* ESPACE DE TRAVAIL CENTRAL */}
         <div className="p-6 max-w-7xl w-full mx-auto">
           {loading ? (
             <div className="h-64 flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-              <p className="text-xs text-slate-500 font-semibold">Chargement des données d'achats...</p>
+              <p className="text-xs text-slate-500 font-semibold">Chargement des données du parc IT...</p>
             </div>
           ) : (
             <div className="space-y-6">
               {activeTab === "dashboard" && (
                 <DashboardOverview
-                  purchaseOrders={purchaseOrders}
                   vendors={vendors}
-                  budgets={budgets}
+                  users={users}
+                  stockItems={stockItems}
+                  stockMovements={stockMovements}
+                  assignments={assignments}
                   onSelectTab={setActiveTab}
-                />
-              )}
-              {activeTab === "orders" && (
-                <PurchaseOrdersList
-                  purchaseOrders={purchaseOrders}
-                  vendors={vendors}
-                  departments={departments}
-                  currentUser={currentUser}
-                  onCreatePO={handleCreatePO}
-                  onUpdateStatus={handleUpdatePOStatus}
                 />
               )}
               {activeTab === "stock" && (
                 <ITStockManagement
                   stockItems={stockItems}
                   stockMovements={stockMovements}
-                  purchaseOrders={purchaseOrders}
                   currentUser={currentUser}
                   onRefresh={fetchSourcingData}
                   onSelectTab={setActiveTab}
@@ -705,14 +546,6 @@ export default function App() {
                   onUpdateVendorRating={handleUpdateVendorRating}
                 />
               )}
-              {activeTab === "bids" && (
-                <BidEvaluator
-                  rfqCases={rfqCases}
-                  currentUser={currentUser}
-                  onAddRFQ={handleAddRFQ}
-                />
-              )}
-              {activeTab === "contracts" && <ContractPlayground vendors={vendors} />}
               {activeTab === "users" && (
                 <UserManagement
                   users={users}

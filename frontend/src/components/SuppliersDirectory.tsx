@@ -200,7 +200,7 @@ export default function SuppliersDirectory({
                     >
                       {riskLabelMap[vendor.riskLevel] || vendor.riskLevel}
                     </span>
-                    <p className="text-[10px] text-slate-400 mt-1 font-mono">{vendor.totalSpend.toLocaleString()} MAD</p>
+                    <p className="text-[10px] text-slate-400 mt-1">{vendor.category}</p>
                   </div>
                 </div>
               </div>
@@ -303,15 +303,15 @@ export default function SuppliersDirectory({
 
               {/* Stats overview details */}
               <div className="border-t border-slate-100 pt-4 space-y-3">
-                <h4 className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Performance Financière</h4>
+                <h4 className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Profil du Partenaire</h4>
                 <div className="grid grid-cols-2 gap-3.5 text-xs text-slate-700">
                   <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block font-medium">TOTAL DÉPENSES ENGAGÉES</span>
-                    <strong className="text-sm font-bold text-slate-800 font-mono">{selectedVendor.totalSpend.toLocaleString()} MAD</strong>
+                    <span className="text-[10px] text-slate-400 block font-medium">SECTEUR</span>
+                    <strong className="text-sm font-bold text-slate-800">{selectedVendor.category}</strong>
                   </div>
                   <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block font-medium">CONTRATS ACTIFS</span>
-                    <strong className="text-sm font-bold text-slate-800 font-mono">{selectedVendor.activeContracts} Contrats</strong>
+                    <span className="text-[10px] text-slate-400 block font-medium">CONTACT</span>
+                    <strong className="text-xs font-bold text-slate-800 break-all">{selectedVendor.contact}<br />{selectedVendor.email}</strong>
                   </div>
                 </div>
               </div>
@@ -321,7 +321,7 @@ export default function SuppliersDirectory({
                   <span className="mt-0.5 text-red-500"><AlertTriangle size={15} /></span>
                   <div>
                     <strong className="font-bold block">Fournisseur Placé sous Probation</strong>
-                    En raison d'alertes sur la qualité ou les délais de livraison, ce fournisseur nécessite un audit renforcé avant validation de toute nouvelle DA.
+                    En raison d'alertes sur la qualité ou les délais de livraison, ce fournisseur nécessite un audit renforcé avant tout nouvel engagement.
                   </div>
                 </div>
               )}
@@ -397,7 +397,7 @@ export default function SuppliersDirectory({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-slate-600 uppercase">Secteur / Catégorie d'Achats</label>
+                  <label className="text-[11px] font-semibold text-slate-600 uppercase">Secteur / Catégorie de Prestation</label>
                   <select
                     className="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-hidden"
                     value={category}

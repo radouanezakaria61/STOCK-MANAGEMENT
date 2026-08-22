@@ -73,17 +73,17 @@ Le frontend en dépend :
 
 Codes utilisés : 200, 201, 400, 401, 403, 404, 409 (conflit métier), 422 (validation), 429, 500. Les messages d'erreur sont **en français et destinés à l'utilisateur final**.
 
-## Périmètre gelé
+## Périmètre supprimé
 
-Les modules **achats** — `BonCommande`, `Budget`, `AppelOffres`, `Offre`, `ia.service.ts` — sont hors périmètre. Leur code reste en place, monté conditionnellement via `MODULES_ACTIFS`.
+Les modules **achats** — `BonCommande`, `LigneCommande`, `Budget`, `AppelOffres`, `Offre`, `ia.service.ts` et le client Gemini — ont été **retirés du dépôt**. L'application couvre exclusivement la gestion de parc informatique : équipements, affectations, stock, maintenance, licences.
 
-- Ne les supprime pas.
-- Ne les fais pas évoluer.
-- Ne casse pas leurs contrats d'API.
+- Ne les réintroduis pas, même partiellement.
+- Ne recrée pas de notion de commande, de budget ou d'appel d'offres.
+- Si un besoin d'achat réapparaît, il fait l'objet d'une décision explicite, pas d'un ajout opportuniste.
 
-**Gelé ne veut pas dire exempté des règles de données.** Le chantier 1 migre **l'ensemble du schéma**, tables gelées comprises : `Float` → `Decimal`, `String` → `DateTime`, UUID, clés étrangères, `supprimeLe`, `creeLe`. Deux conventions de types dans une même base créent une frontière de conversion permanente — et `BonCommande` alimentera le stock au chantier 7, donc ses dates doivent être des `DateTime`. Le gel porte sur les fonctionnalités, pas sur les types.
+`Fournisseur` est **conservé** : le parc IT en a besoin pour les équipements, les licences et la maintenance.
 
-`Fournisseur` est **partagé** et reste actif. Le flux `import-po` sera réutilisé comme canal d'entrée en stock au chantier 7.
+L'entrée en stock se fait désormais par l'écran « Réception » prévu au chantier 7, et manuellement en attendant.
 
 ## Avant de dire qu'un chantier est terminé
 
