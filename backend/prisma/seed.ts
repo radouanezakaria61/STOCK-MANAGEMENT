@@ -11,9 +11,10 @@
  * en mémoire.
  */
 import "dotenv/config";
-import { randomUUID } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
 import { hash as hacherArgon } from "@node-rs/argon2";
 import { PrismaClient } from "@prisma/client";
+import { chiffrer } from "../src/lib/chiffrement.js";
 
 const prisma = new PrismaClient();
 
@@ -31,33 +32,56 @@ const ROLES = [
 ];
 
 const PERMISSIONS = [
+  { code: "parc.consulter", description: "Consulter le parc : articles, affectations, mouvements, sociétés" },
+  { code: "utilisateurs.consulter", description: "Consulter la liste des comptes utilisateurs" },
   { code: "utilisateurs.gerer", description: "Créer, modifier, désactiver les comptes utilisateur" },
   { code: "societes.gerer", description: "Gérer le référentiel des sociétés" },
   { code: "stock.ecrire", description: "Articles de stock et mouvements (entrée, sortie, ajustement)" },
   { code: "affectations.ecrire", description: "Affectations, restitutions et retraits" },
+  { code: "affectations.confidentiels", description: "Révéler les codes confidentiels SIM (PIN/PUK) chiffrés" },
   { code: "audit.consulter", description: "Consulter le journal d'audit" },
   { code: "parametres.gerer", description: "Paramètres généraux de l'application" }
 ] as const;
 
+// Chantier 3.5 (P1.2) : permissions de CONSULTATION explicites.
+//  - parc.consulter : tous les rôles (EMPLOYEE est « lecture » par nature).
+//  - utilisateurs.consulter : supervision (admin, manager, auditeur).
 const MATRICE_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   SUPER_ADMIN: [
+    "parc.consulter",
+    "utilisateurs.consulter",
     "utilisateurs.gerer",
     "societes.gerer",
     "stock.ecrire",
     "affectations.ecrire",
+    "affectations.confidentiels",
     "audit.consulter",
     "parametres.gerer"
   ],
-  IT_MANAGER: ["stock.ecrire", "affectations.ecrire", "audit.consulter"],
-  IT_TECHNICIAN: ["stock.ecrire", "affectations.ecrire"],
-  STOCK_MANAGER: ["stock.ecrire", "affectations.ecrire", "societes.gerer"],
-  AUDITOR: ["audit.consulter"],
-  EMPLOYEE: []
+  IT_MANAGER: ["parc.consulter", "utilisateurs.consulter", "stock.ecrire", "affectations.ecrire", "affectations.confidentiels", "audit.consulter"],
+  IT_TECHNICIAN: ["parc.consulter", "stock.ecrire", "affectations.ecrire"],
+  STOCK_MANAGER: ["parc.consulter", "stock.ecrire", "affectations.ecrire", "societes.gerer"],
+  AUDITOR: ["parc.consulter", "utilisateurs.consulter", "audit.consulter"],
+  EMPLOYEE: ["parc.consulter"]
 };
 
 // Comptes de démonstration réservés au développement (voir main()) :
-// même mot de passe temporaire pour tous, affiché une fois à la fin du seed.
-const MOT_DE_PASSE_DEMO = "Distra-Demo-2026";
+// mot de passe temporaire commun lu depuis l'environnement, ou GÉNÉRÉ
+// aléatoirement et affiché une seule fois — plus aucun secret committé
+// (chantier 3.5, P4.24). Interdit en production.
+function motDePasseDemo(): string {
+  const fourni = process.env.MOT_DE_PASSE_DEMO;
+  if (fourni && fourni.length >= 12) return fourni;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Refus de semer des comptes démo sans MOT_DE_PASSE_DEMO (≥ 12 caractères) en production."
+    );
+  }
+  const genere = `Demo-${randomBytes(9).toString("base64url")}`;
+  console.log(`\n  Mot de passe de démonstration généré (à noter, non réaffiché) : ${genere}\n`);
+  return genere;
+}
+const MOT_DE_PASSE_DEMO = motDePasseDemo();
 
 async function semerRolesEtPermissions(): Promise<Map<string, string>> {
   const idRole = new Map<string, string>();
@@ -108,9 +132,12 @@ async function main() {
   // en développement. En production, cette variable n'est jamais posée par
   // l'application — une purge est une opération DBA documentée.
   await prisma.$executeRawUnsafe("SELECT set_config('app.purge_journaux', 'autorisee', false)");
-  // Nettoyage (ordre respectant les clés étrangères)
+  // Nettoyage (ordre respectant les clés étrangères). Chantier 3.5 : les
+  // notifications visent un destinataire (FK RESTRICT) → purge AVANT les
+  // comptes utilisateurs.
   await prisma.journalAudit.deleteMany();
   await prisma.session.deleteMany();
+  await prisma.notification.deleteMany();
   await prisma.retourAffectation.deleteMany();
   await prisma.ligneAffectation.deleteMany();
   await prisma.affectation.deleteMany();
@@ -640,8 +667,8 @@ async function main() {
       hasSimCard: true,
       simOperator: "IAM",
       simPhoneNumber: "06 61 88 12 34",
-      simPuk: "89230147",
-      simPin: "1234",
+      simPuk: chiffrer("89230147"),
+      simPin: chiffrer("1234"),
       hasSmartphone: true,
       deviceBrand: "HP",
       deviceImei: "358920198273615",

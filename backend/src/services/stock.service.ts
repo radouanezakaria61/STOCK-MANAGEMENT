@@ -5,28 +5,22 @@ import {
   verrouillerReferences,
   type Tx
 } from "../lib/prisma.js";
-import { introuvable, requeteInvalide, conflit, stockIndisponible } from "../lib/erreurs.js";
-import { dateDuJour, numeroSuivant } from "../lib/ids.js";
-import { enNombre } from "../lib/serialisation.js";
+import { introuvable, requeteInvalide, conflit, stockIndisponible, retourExcedent } from "../lib/erreurs.js";
+import { dateDuJour, prochainNumero } from "../lib/ids.js";
 import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
-import { exigerTransition, STATUTS_MATERIEL } from "../lib/machine-etats.js";
+import { exigerTransition, STATUTS_MATERIEL, TYPES_MOUVEMENT, type TypeMouvement } from "../lib/machine-etats.js";
 import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
 import type { ContexteActeur } from "../lib/acteur.js";
 
 // ── Références ────────────────────────────────────────────────────────
-// Le scan des références existantes s'exécute DANS la transaction, sous le
-// verrou consultatif, via SQL brut : il doit voir aussi les lignes archivées
-// (soft delete) dont la référence unique reste réservée.
-
-async function referencesArticlesExistantes(tx: Tx): Promise<string[]> {
-  const lignes = await tx.$queryRaw<{ reference: string }[]>`
-    SELECT reference FROM articles_stock WHERE reference LIKE 'STK-%'
-  `;
-  return lignes.map((l) => l.reference);
-}
+// Chantier 3.5 : les numéros proviennent du compteur transactionnel
+// (`compteurs`, amorcé par la migration sur les maximums existants,
+// archivés compris). L'upsert atomique INSERT … ON CONFLICT … RETURNING
+// remplace le scan des références : coût O(1) et unicité garantie même
+// sous forte concurrence.
 
 async function prochainsNumerosArticle(tx: Tx) {
-  const numero = numeroSuivant(await referencesArticlesExistantes(tx), /^STK-(\d+)$/);
+  const numero = await prochainNumero(tx, "article");
   return {
     reference: `STK-${String(numero).padStart(3, "0")}`,
     assetTag: `IT-AST-${1000 + numero}`
@@ -34,8 +28,8 @@ async function prochainsNumerosArticle(tx: Tx) {
 }
 
 export async function nouvelleReferenceMouvement(tx?: Tx): Promise<string> {
-  const total = await (tx ?? prisma).mouvementStock.count();
-  return `MVT-00${total + 1}`;
+  const numero = await prochainNumero(tx ?? (prisma as unknown as Tx), "mouvement");
+  return `MVT-${String(numero).padStart(3, "0")}`;
 }
 
 // Verrou pessimiste sur une ligne article (SELECT … FOR UPDATE) après
@@ -118,6 +112,28 @@ function instantaneArticle(a: ArticleStock): Record<string, unknown> {
   };
 }
 
+// Chantier 3.5 : les montants passent par Prisma.Decimal dès la frontière du
+// service — plus aucun parseFloat (imprécision binaire) sur l'argent.
+// Accepte « 1250 », « 1250,50 », « 1 250.00 MAD » ; refuse le reste (400).
+function versMontant(valeur: unknown, libelle: string): Prisma.Decimal {
+  const brut = String(valeur ?? "")
+    .trim()
+    .replace(/[\s']/g, "")
+    .replace(",", ".")
+    .replace(/MAD/i, "");
+  if (brut === "") return new Prisma.Decimal(0);
+  let montant: Prisma.Decimal;
+  try {
+    montant = new Prisma.Decimal(brut);
+  } catch {
+    throw requeteInvalide(`${libelle} invalide : « ${String(valeur)} » n'est pas un montant.`);
+  }
+  if (!montant.isFinite() || montant.isNegative()) {
+    throw requeteInvalide(`${libelle} doit être un montant positif ou nul.`);
+  }
+  return montant.toDecimalPlaces(2);
+}
+
 // ── Création (transaction + audit) ────────────────────────────────────
 
 export interface EntreeArticle {
@@ -161,7 +177,7 @@ export async function creerArticle(data: EntreeArticle, acteur?: ContexteActeur)
   const seuil = parseInt(String(minThreshold)) || 2;
   if (qty <= 0) throw requeteInvalide("La quantité initiale doit être supérieure à zéro.");
   if (seuil < 0) throw requeteInvalide("Le seuil d'alerte ne peut pas être négatif.");
-  const unitPrice = parseFloat(String(unitPriceMAD)) || 0;
+  const unitPrice = versMontant(unitPriceMAD, "Le prix unitaire");
 
   try {
     const resultat = await prisma.$transaction(async (tx) => {
@@ -183,7 +199,7 @@ export async function creerArticle(data: EntreeArticle, acteur?: ContexteActeur)
           maintenanceQty: 0,
           minThreshold: seuil,
           unitPriceMAD: unitPrice,
-          totalValueMAD: qty * unitPrice,
+          totalValueMAD: unitPrice.times(qty),
           location: location || "Magasin Central IT (Casablanca)",
           status: status || STATUTS_MATERIEL.DISPONIBLE,
           fournisseur: fournisseur || null,
@@ -313,12 +329,12 @@ export async function modifierArticle(
         donnees["availableQty"] = nouvelleQuantite - engagees;
       }
 
-      let prixUnitaire = enNombre(article.unitPriceMAD);
+      let prixUnitaire = new Prisma.Decimal(article.unitPriceMAD);
       if (data.unitPriceMAD !== undefined) {
-        prixUnitaire = parseFloat(String(data.unitPriceMAD)) || 0;
+        prixUnitaire = versMontant(data.unitPriceMAD, "Le prix unitaire");
         donnees["unitPriceMAD"] = prixUnitaire;
       }
-      donnees["totalValueMAD"] = quantite * prixUnitaire;
+      donnees["totalValueMAD"] = prixUnitaire.times(quantite);
 
       const apres = await tx.articleStock.update({
         where: { id: article.id },
@@ -365,15 +381,17 @@ async function verrouillerArticleHorsTx(idOuReference: string): Promise<ArticleS
 
 // ── Mouvements de stock (transactionnels + audit + notifications) ─────
 
-const TYPES_MOUVEMENT = [
-  "Sortie Affectation",
-  "Retour Stock",
-  "Entrée Achat",
-  "Mise au Rebut",
-  "Ajustement Inventaire"
-] as const;
-
-type TypeMouvement = (typeof TYPES_MOUVEMENT)[number];
+// Chantier 3.5 (P2.7) : les libellés proviennent de la source unique
+// lib/machine-etats.ts. Cet endpoint n'accepte que les mouvements SAISIS
+// manuellement ; « Envoi Maintenance » et « Annulation Affectation » sont
+// produits exclusivement par leurs flux métier (restitution, annulation).
+const TYPES_MOUVEMENT_MANUELS: readonly TypeMouvement[] = [
+  TYPES_MOUVEMENT.SORTIE_AFFECTATION,
+  TYPES_MOUVEMENT.RETOUR_STOCK,
+  TYPES_MOUVEMENT.ENTREE_ACHAT,
+  TYPES_MOUVEMENT.MISE_AU_REBUT,
+  TYPES_MOUVEMENT.AJUSTEMENT_INVENTAIRE
+];
 
 export interface EntreeMouvement {
   type?: string;
@@ -390,9 +408,9 @@ export async function enregistrerMouvement(
   acteur?: ContexteActeur
 ) {
   const { type, quantity, performedBy, recipient, department, notes } = data;
-  if (!type || !(TYPES_MOUVEMENT as readonly string[]).includes(type)) {
+  if (!type || !TYPES_MOUVEMENT_MANUELS.includes(type as TypeMouvement)) {
     throw requeteInvalide(
-      `Type de mouvement inconnu${type ? ` : « ${type} »` : ""}. Types acceptés : ${TYPES_MOUVEMENT.join(", ")}.`
+      `Type de mouvement inconnu${type ? ` : « ${type} »` : ""}. Types acceptés ici : ${TYPES_MOUVEMENT_MANUELS.join(", ")}.`
     );
   }
   const qty = parseInt(String(quantity)) || 1;
@@ -407,8 +425,8 @@ export async function enregistrerMouvement(
     const item = await verrouillerArticle(tx, idOuReference);
     const avant = instantaneArticle(item);
 
-    const prixUnitaire = enNombre(item.unitPriceMAD);
-    let valeurTotale = enNombre(item.totalValueMAD);
+    const prixUnitaire = new Prisma.Decimal(item.unitPriceMAD);
+    let valeurTotale = new Prisma.Decimal(item.totalValueMAD);
 
     let actionAudit: string = ACTIONS_AUDIT.STOCK_ADJUSTMENT;
 
@@ -459,9 +477,16 @@ export async function enregistrerMouvement(
             })
           );
         } else {
-          const returnQty = Math.min(qty, item.allocatedQty);
-          item.allocatedQty = Math.max(0, item.allocatedQty - returnQty);
-          item.availableQty += returnQty;
+          // Chantier 3.5 : plus aucun écrêtage silencieux — réintégrer plus
+          // d'unités qu'il n'y en a d'affectées est une erreur de saisie qui
+          // doit être corrigée, pas masquée.
+          if (qty > item.allocatedQty) {
+            throw retourExcedent(
+              `Retour impossible pour « ${item.name} » (${item.reference}) : ${qty} unité(s) à réintégrer mais seulement ${item.allocatedQty} affectée(s). Corrigez la quantité ou passez par un ajustement d'inventaire.`
+            );
+          }
+          item.allocatedQty -= qty;
+          item.availableQty += qty;
           if (item.allocatedQty === 0) item.assignedTo = null;
           if (item.status !== STATUTS_MATERIEL.DISPONIBLE && item.allocatedQty === 0) {
             item.status = exigerTransition(item.status, STATUTS_MATERIEL.DISPONIBLE);
@@ -472,7 +497,7 @@ export async function enregistrerMouvement(
       case "Entrée Achat": {
         item.quantity += qty;
         item.availableQty += qty;
-        valeurTotale = item.quantity * prixUnitaire;
+        valeurTotale = prixUnitaire.times(item.quantity);
         actionAudit = ACTIONS_AUDIT.STOCK_ENTRY;
         break;
       }
@@ -488,7 +513,7 @@ export async function enregistrerMouvement(
         item.availableQty -= depuisDisponible;
         item.maintenanceQty -= depuisMaintenance;
         item.quantity = Math.max(0, item.quantity - qty);
-        valeurTotale = item.quantity * prixUnitaire;
+        valeurTotale = prixUnitaire.times(item.quantity);
         if (item.quantity === 0) {
           item.status = exigerTransition(item.status, STATUTS_MATERIEL.REFORME);
           actionAudit = ACTIONS_AUDIT.ITEM_RETIRED;
@@ -504,7 +529,7 @@ export async function enregistrerMouvement(
         }
         item.quantity = qty;
         item.availableQty = qty - engagees;
-        valeurTotale = item.quantity * prixUnitaire;
+        valeurTotale = prixUnitaire.times(item.quantity);
         break;
       }
     }

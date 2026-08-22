@@ -59,11 +59,12 @@ function lireCookie(req: Request, nom: string): string | null {
   return null;
 }
 
+// Chantier 3.5 (P1.1) : l'adresse cliente est déterminée par Express via
+// `req.ip`, qui respecte la configuration `trust proxy` du serveur
+// (app.ts). Aucune lecture manuelle de `X-Forwarded-For` : un faux en-tête
+// envoyé directement au serveur ne peut plus ni contourner l'anti-bruteforce
+// ni polluer le journal d'audit avec des IP usurpées.
 export function adresseIpDe(req: Request): string | null {
-  const transmise = req.headers["x-forwarded-for"];
-  if (typeof transmise === "string" && transmise.length > 0) {
-    return transmise.split(",")[0]!.trim();
-  }
   return req.ip ?? null;
 }
 

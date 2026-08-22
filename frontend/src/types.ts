@@ -187,12 +187,14 @@ export type ReturnCause =
   | "Fin de mission / Projet temporaire"
   | "Autre motif";
 
+// Chantier 3.5 : liste fermée alignée sur ETATS_MATERIEL_CONSTATES (backend,
+// lib/machine-etats.ts). La décision maintenance/rebut se base sur cette
+// valeur structurée, plus sur du texte libre.
 export type EquipmentReturnCondition =
-  | "Parfait état / Comme neuf"
-  | "Bon état d'usage"
-  | "Rayures / Usure légère"
-  | "Endommagé / Réparation requise"
-  | "Hors service / Rebut";
+  | "Bon état"
+  | "Endommagé"
+  | "Maintenance requise"
+  | "Hors service";
 
 export interface MaterialReturnRecord {
   id: string;

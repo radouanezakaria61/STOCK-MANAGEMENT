@@ -13,13 +13,20 @@
  * course pour garantir des compteurs et un ordre de références connus,
  * quel que soit l'état laissé par les exécutions précédentes.
  */
+import "dotenv/config";
 import { execSync } from "node:child_process";
 import { PrismaClient } from "@prisma/client";
 
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
-// Doit refléter MOT_DE_PASSE_DEMO du seed (développement uniquement).
-const MDP_DEMO = "Distra-Demo-2026";
+// Chantier 3.5 : plus aucun secret committé — le mot de passe des comptes de
+// démonstration vient exclusivement de l'environnement (.env en dev) et doit
+// refléter MOT_DE_PASSE_DEMO utilisé par le seed.
+const MDP_DEMO = process.env.MOT_DE_PASSE_DEMO;
+if (!MDP_DEMO) {
+  console.error("MOT_DE_PASSE_DEMO manquant : renseignez-le dans backend/.env.");
+  process.exit(1);
+}
 const MESSAGE_ECHEC_ATTENDU = "Identifiant ou mot de passe incorrect.";
 
 let echecs = 0;
@@ -236,9 +243,10 @@ async function main() {
   const auditor = new SessionHttp();
   const coAuditor = await auditor.connexion("sarah.benali", MDP_DEMO);
   verif(
-    "auditor connecté, permissions limitées à audit.consulter",
+    "auditor connecté, permissions de consultation + audit",
     coAuditor.status === 200 &&
-      JSON.stringify([...(coAuditor.corps?.data?.permissions ?? [])].sort()) === JSON.stringify(["audit.consulter"]),
+      JSON.stringify([...(coAuditor.corps?.data?.permissions ?? [])].sort()) ===
+        JSON.stringify(["audit.consulter", "parc.consulter", "utilisateurs.consulter"]),
     JSON.stringify(coAuditor.corps?.data?.permissions)
   );
 
@@ -623,7 +631,8 @@ async function main() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       cause: "Fin de mission",
-      equipmentCondition: "Écran cassé, châssis fendu",
+      // Chantier 3.5 : état constaté STRUCTURÉ (liste fermée côté serveur).
+      equipmentCondition: "Endommagé",
       actionTaken: "Remise en stock disponible",
       inspectedBy: "Vérificateur Chantier 3",
       notes: "Test restitution dégradée"
@@ -663,7 +672,7 @@ async function main() {
   const secondeRestitution = await admin.json(`/api/assignments/${idFicheFragile}/return`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ cause: "Doublon", equipmentCondition: "Bon état d'usage" })
+    body: JSON.stringify({ cause: "Doublon", equipmentCondition: "Bon état" })
   });
   verif(
     "seconde restitution de la même fiche → 409 ASSIGNMENT_ALREADY_RETURNED",
@@ -677,6 +686,99 @@ async function main() {
     suppressionHistorique.status === 400 && String(suppressionHistorique.corps.error).toLowerCase().includes("active"),
     `${suppressionHistorique.status} ${JSON.stringify(suppressionHistorique.corps)}`
   );
+
+  // ══════════ K2. SUR-RESTITUTION REFUSÉE (chantier 3.5) ══════════
+  // L'écrêtage silencieux disparaît : réintégrer plus d'unités qu'il n'y en
+  // a d'affectées est refusé (409 RETURN_QTY_EXCEEDS_ALLOCATED), quantités
+  // inchangées.
+  console.log("\n── K2. Sur-restitution refusée ──");
+  const articleRetour = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} lot retour`,
+      category: "Laptops & Portables",
+      brand: "Test",
+      model: "CH35-RETOUR",
+      serialNumber: `${marqueCh3}-SN35`,
+      quantity: 5,
+      minThreshold: 0,
+      unitPriceMAD: "1 250,50 MAD",
+      performedBy: "Vérificateur Chantier 3.5"
+    })
+  });
+  const idRetour: string | undefined = articleRetour.corps?.data?.id;
+  // Prix saisi avec espaces/virgule : doit être interprété en Decimal(12,2).
+  verif(
+    "création article, prix « 1 250,50 MAD » → Decimal 1250.5",
+    articleRetour.status === 201 && Number(articleRetour.corps?.data?.unitPriceMAD) === 1250.5 &&
+      Number(articleRetour.corps?.data?.totalValueMAD) === 6252.5,
+    `${articleRetour.status} ${JSON.stringify(articleRetour.corps?.data && { p: articleRetour.corps.data.unitPriceMAD, t: articleRetour.corps.data.totalValueMAD })}`
+  );
+
+  const ficheRetour = await admin.json("/api/assignments", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      beneficiaryName: "Test Retour",
+      beneficiaryDepartment: "Technologies de l'Information",
+      items: [{ stockItemId: idRetour }]
+    })
+  });
+  verif("affectation de 1 unité → 201", ficheRetour.status === 201);
+
+  const surRestitution = await admin.json(`/api/stock/${idRetour}/movement`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "Retour Stock", quantity: 2, performedBy: "Vérificateur Chantier 3.5" })
+  });
+  verif(
+    "retour de 2 unités alors qu'1 seule affectée → 409 RETURN_QTY_EXCEEDS_ALLOCATED",
+    surRestitution.status === 409 && surRestitution.corps.code === "RETURN_QTY_EXCEEDS_ALLOCATED",
+    `${surRestitution.status} ${JSON.stringify(surRestitution.corps).slice(0, 200)}`
+  );
+  etat = await lireData();
+  articleLu = etat.articles.find((a: any) => a.id === idRetour);
+  verif(
+    "quantités intactes après le refus (dispo 4, alloué 1)",
+    articleLu?.availableQty === 4 && articleLu?.allocatedQty === 1,
+    JSON.stringify(articleLu && { d: articleLu.availableQty, a: articleLu.allocatedQty })
+  );
+
+  // La fiche est annulée AVANT tout autre mouvement : aucun état intermédiaire
+  // incohérent (fiche Active vs quantités) ne doit subsister après le test.
+  const annulationRetour = await admin.json(`/api/assignments/${ficheRetour.corps?.data?.id}`, { method: "DELETE" });
+  etat = await lireData();
+  articleLu = etat.articles.find((a: any) => a.id === idRetour);
+  verif(
+    "annulation de la fiche → stock restauré (dispo 5, alloué 0)",
+    annulationRetour.status === 200 && articleLu?.availableQty === 5 && articleLu?.allocatedQty === 0,
+    JSON.stringify(articleLu && { d: articleLu.availableQty, a: articleLu.allocatedQty })
+  );
+
+  // Chemin accepté du retour : sortie manuelle puis retour EXACT — hors fiche,
+  // donc aucune interaction avec les affectations.
+  await admin.json(`/api/stock/${idRetour}/movement`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "Sortie Affectation", quantity: 2, performedBy: "Vérificateur Chantier 3.5" })
+  });
+  const retourNormal = await admin.json(`/api/stock/${idRetour}/movement`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "Retour Stock", quantity: 2, performedBy: "Vérificateur Chantier 3.5" })
+  });
+  etat = await lireData();
+  articleLu = etat.articles.find((a: any) => a.id === idRetour);
+  verif(
+    "sortie 2 puis retour exact 2 → accepté, dispo restauré à 5",
+    retourNormal.status === 200 && articleLu?.availableQty === 5 && articleLu?.allocatedQty === 0,
+    JSON.stringify(articleLu && { d: articleLu.availableQty, a: articleLu.allocatedQty })
+  );
+
+  // Nettoyage : l'unité est déjà réintégrée par le mouvement ; la fiche de
+  // test reste dans l'historique, l'article est archivé (soft delete).
+  await admin.json(`/api/stock/${idRetour}`, { method: "DELETE" });
 
   // Une fiche ACTIVE, elle, peut être annulée : le matériel réintègre le stock.
   const articleAnnulable = await admin.json("/api/stock", {
@@ -789,7 +891,7 @@ async function main() {
   const indexPartiels = await db.$queryRaw<{ indexname: string }[]>`
     SELECT indexname FROM pg_indexes
     WHERE schemaname = 'public'
-      AND indexname IN ('uq_article_numero_serie', 'uq_affectation_imei', 'uq_notification_alerte_ouverte')
+      AND indexname IN ('uq_article_numero_serie', 'uq_affectation_imei', 'uq_notification_alerte_ouverte_destinataire')
   `;
   verif(
     "base : 3 index partiels uniques posés",
@@ -831,20 +933,27 @@ async function main() {
     tablesImmuables.map((t) => t.nom_table).sort().join(", ")
   );
 
-  // Déduplication des alertes : une seule OUVERTE par (type, entité), garantie SQL.
+  // Déduplication des alertes : une seule OUVERTE par (type, entité,
+  // DESTINATAIRE) — chantier 3.5, le fan-out par destinataire remplace le
+  // modèle global. Deux insertions identiques pour le même compte : la
+  // seconde est refusée par l'index unique partiel.
   const entiteDedup = `${marqueCh3}-dedup`;
+  const adminDedup = await db.utilisateur.findFirst({
+    where: { role: { code: "SUPER_ADMIN" }, supprimeLe: null },
+    select: { id: true }
+  });
   let dedupBloque = false;
   try {
     await db.notification.create({
-      data: { type: "STOCK_FAIBLE", titre: "Test dédup 1", message: "-", entite: "ArticleStock", entiteId: entiteDedup }
+      data: { type: "STOCK_FAIBLE", titre: "Test dédup 1", message: "-", entite: "ArticleStock", entiteId: entiteDedup, destinataireId: adminDedup!.id }
     });
     await db.notification.create({
-      data: { type: "STOCK_FAIBLE", titre: "Test dédup 2", message: "-", entite: "ArticleStock", entiteId: entiteDedup }
+      data: { type: "STOCK_FAIBLE", titre: "Test dédup 2", message: "-", entite: "ArticleStock", entiteId: entiteDedup, destinataireId: adminDedup!.id }
     });
   } catch {
     dedupBloque = true;
   }
-  verif("index partiel : deuxième alerte OUVERTE pour la même entité REFUSÉE", dedupBloque);
+  verif("index partiel : deuxième alerte OUVERTE pour la même entité ET destinataire REFUSÉE", dedupBloque);
   await db.notification.deleteMany({ where: { entiteId: entiteDedup } }).catch(() => undefined);
 
   const ligneIdem = await db.requeteIdempotente.findUnique({ where: { cle: `POST /api#${cleIdem}` } });

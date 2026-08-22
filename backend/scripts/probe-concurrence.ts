@@ -9,10 +9,17 @@
  *
  * Prérequis : serveur démarré sur BASE (défaut http://localhost:3001).
  */
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 
 const BASE = process.env.API_BASE || "http://localhost:3001";
-const MDP_DEMO = "Distra-Demo-2026";
+// Chantier 3.5 : plus aucun secret committé — le mot de passe des comptes de
+// démonstration vient exclusivement de l'environnement (.env en dev).
+const MDP_DEMO = process.env.MOT_DE_PASSE_DEMO;
+if (!MDP_DEMO) {
+  console.error("MOT_DE_PASSE_DEMO manquant : renseignez-le dans backend/.env.");
+  process.exit(1);
+}
 const db = new PrismaClient();
 
 let echecs = 0;

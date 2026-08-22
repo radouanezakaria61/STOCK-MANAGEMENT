@@ -1,15 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 
-// Chantier 3 — notifications internes (points 11 à 14).
-//  - Aucun email/SMS simulé : le seul canal est l'application elle-même.
-//    L'interface CanalNotification prépare l'ajout futur d'un vrai canal
-//    (SMTP configuré, webhook…) sans toucher aux services.
-//  - Déduplication : les alertes persistantes (stock sous seuil) ne sont
-//    créées qu'une fois — l'index unique partiel `uq_notification_alerte_ouverte`
-//    garantit une seule notification OUVERTE par (type, entité), même sous
-//    concurrence. Une résolution (stock remonté au-dessus du seuil) rouvre
-//    la porte à une occurrence future.
+// Chantier 3 → 3.5 — notifications internes.
+// Chantier 3.5 (P1.5) : FINI le modèle global. Chaque notification vise UN
+// destinataire (fan-out à la création) : la lecture par A ne marque plus
+// « lue » pour B. Audience par défaut = comptes actifs portant les
+// permissions opérationnelles (stock/affectations) ou le rôle SUPER_ADMIN ;
+// un appelant peut imposer une liste précise de destinataires.
+// Déduplication : index unique partiel (type, entité, destinataire) — une
+// seule alerte OUVERTE par entité ET par destinataire, même sous concurrence.
 
 export const TYPES_NOTIFICATION = {
   STOCK_FAIBLE: "STOCK_FAIBLE",
@@ -27,59 +26,66 @@ export interface DonneesNotification {
   entite?: string | null;
   entiteId?: string | null;
   cibleOnglet?: string | null;
+  /** Destinataires explicites ; à défaut, l'audience opérationnelle par défaut. */
+  destinataireIds?: string[];
 }
 
-/** Canal de notification (point 14) : interne aujourd'hui, SMTP/webhook plus tard. */
-export interface CanalNotification {
-  readonly nom: string;
-  envoyer(donnees: DonneesNotification): Promise<void>;
+/** IDs des membres de l'audience opérationnelle (comptes actifs). */
+async function audienceParDefaut(): Promise<string[]> {
+  const lignes = await prisma.utilisateur.findMany({
+    where: {
+      supprimeLe: null,
+      status: "Actif",
+      OR: [
+        { role: { code: "SUPER_ADMIN" } },
+        { role: { permissions: { some: { permission: { code: { in: ["stock.ecrire", "affectations.ecrire"] } } } } } }
+      ]
+    },
+    select: { id: true }
+  });
+  return lignes.map((l) => l.id);
 }
-
-const canalInterne: CanalNotification = {
-  nom: "interne",
-  async envoyer(donnees) {
-    await prisma.notification.create({
-      data: {
-        type: donnees.type,
-        titre: donnees.titre,
-        message: donnees.message,
-        entite: donnees.entite ?? null,
-        entiteId: donnees.entiteId ?? null,
-        cibleOnglet: donnees.cibleOnglet ?? null
-      }
-    });
-  }
-};
-
-const canaux: readonly CanalNotification[] = [canalInterne];
 
 /**
- * Crée une notification dédupliquée. Le doublon éventuel (alerte déjà
- * OUVERTE pour la même entité) est ignoré silencieusement : rafraîchir un
- * écran ou retomber sous le seuil ne doit jamais empiler des copies.
+ * Crée la notification pour chaque destinataire (fan-out). Un doublon
+ * (alerte déjà OUVERTE même type/entité/destinataire, P2002 sur l'index
+ * partiel) est ignoré silencieusement. Une notification manquante ne fait
+ * jamais échouer l'opération métier qui la déclenche.
  */
 export async function notifier(donnees: DonneesNotification): Promise<void> {
-  for (const canal of canaux) {
+  const destinataires =
+    donnees.destinataireIds && donnees.destinataireIds.length > 0
+      ? donnees.destinataireIds
+      : await audienceParDefaut();
+
+  for (const destinataireId of destinataires) {
     try {
-      await canal.envoyer(donnees);
+      await prisma.notification.create({
+        data: {
+          type: donnees.type,
+          titre: donnees.titre,
+          message: donnees.message,
+          entite: donnees.entite ?? null,
+          entiteId: donnees.entiteId ?? null,
+          cibleOnglet: donnees.cibleOnglet ?? null,
+          destinataireId
+        }
+      });
     } catch (erreur) {
       if (
         erreur instanceof Prisma.PrismaClientKnownRequestError &&
         erreur.code === "P2002"
       ) {
-        return; // alerte déjà ouverte : déduplication
+        continue; // déjà ouverte pour ce destinataire : déduplication
       }
-      // Une notification manquante ne doit jamais faire échouer l'opération
-      // métier qui la déclenche : on trace et on continue.
-      console.error(`Canal « ${canal.nom} » : notification non envoyée :`, erreur);
+      console.error(`Notification non envoyée à ${destinataireId} :`, erreur);
     }
   }
 }
 
 /**
- * Résout les alertes ouvertes d'un type pour une entité (ex. stock revenu
- * au-dessus du seuil). Appelée après les opérations qui peuvent fermer une
- * alerte ; idempotent.
+ * Résout les alertes ouvertes d'un type pour une entité, TOUS destinataires
+ * confondus (ex. stock remonté au-dessus du seuil). Idempotent.
  */
 export async function resoudreNotifications(type: string, entiteId: string): Promise<number> {
   const resultat = await prisma.notification.updateMany({
@@ -91,8 +97,8 @@ export async function resoudreNotifications(type: string, entiteId: string): Pro
 
 /**
  * Contrôle de seuil après toute mutation de stock : crée STOCK_FAIBLE si le
- * disponible passe sous le seuil (alerte activée), résout l'alerte ouverte
- * s'il le dépasse à nouveau. À appeler avec l'état APRÈS écriture.
+ * disponible passe sous le seuil, résout l'alerte ouverte s'il le dépasse.
+ * À appeler avec l'état APRÈS écriture.
  */
 export async function verifierSeuilStock(article: {
   id: string;

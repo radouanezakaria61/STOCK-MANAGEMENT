@@ -6,9 +6,13 @@ import { serialiser } from "./lib/serialisation.js";
 
 const app = express();
 
-// Derrière un reverse proxy interne : les adresses clientes viennent des
-// en-têtes X-Forwarded-*.
-app.set("trust proxy", 1);
+// Chantier 3.5 (P1.1) : la confiance aux en-têtes X-Forwarded-* est
+// EXPLICITE et désactivée par défaut. En déploiement direct LAN/VPN, un
+// client peut forger X-Forwarded-For : il ne doit jamais être cru.
+// Derrière un reverse proxy de confiance, définir TRUST_PROXY au nombre
+// de sauts (ex. TRUST_PROXY=1) — Express détermine alors l'IP cliente.
+const sautsProxy = Number(process.env.TRUST_PROXY ?? "");
+app.set("trust proxy", Number.isInteger(sautsProxy) && sautsProxy >= 0 ? sautsProxy : false);
 
 // En-têtes HTTP de sécurité de base. CSP laissée ouverte : le SPA Vite est
 // servi par ce backend en production ; un durcissement CSP viendra avec le

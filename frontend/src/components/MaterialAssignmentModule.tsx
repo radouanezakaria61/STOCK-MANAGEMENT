@@ -142,7 +142,7 @@ export default function MaterialAssignmentModule({
   const [returnDate, setReturnDate] = useState(new Date().toISOString().split("T")[0]);
   const [returnCause, setReturnCause] = useState<ReturnCause>("Départ collaborateur (Fin de contrat / Démission)");
   const [customReturnCause, setCustomReturnCause] = useState("");
-  const [equipmentCondition, setEquipmentCondition] = useState<EquipmentReturnCondition>("Bon état d'usage");
+  const [equipmentCondition, setEquipmentCondition] = useState<EquipmentReturnCondition>("Bon état");
   const [accessoriesReturned, setAccessoriesReturned] = useState<string[]>([]);
   const [dataWiped, setDataWiped] = useState(true);
   const [bitlockerUnlocked, setBitlockerUnlocked] = useState(true);
@@ -407,7 +407,7 @@ export default function MaterialAssignmentModule({
     setSelectedAssignmentForReturn(assignment);
     setReturnDate(new Date().toISOString().split("T")[0]);
     setReturnCause("Départ collaborateur (Fin de contrat / Démission)");
-    setEquipmentCondition("Bon état d'usage");
+    setEquipmentCondition("Bon état");
     // Pre-fill all accessories that were given
     const allAssignedAccessories = assignment.items.flatMap(i => i.accessories || []);
     const uniqueAccessories = Array.from(new Set(allAssignedAccessories));
@@ -417,6 +417,27 @@ export default function MaterialAssignmentModule({
     setTechnicalDiagnosis("Matériel restitué à la DSI. Contrôle technique conforme, réinitialisation prête.");
     setActionTaken("Remise en stock disponible");
     setReturnNotes("");
+  };
+
+  // Chantier 3.5 : les PIN/PUK ne transitent plus dans les listes. À
+  // l'ouverture de la fiche, on demande la révélation au serveur (permission
+  // « affectations.confidentiels », action auditée). Sans autorisation :
+  // affichage « — » silencieux.
+  const handleOuvrirImpression = async (assignment: MaterialAssignment) => {
+    setSelectedAssignmentForPrint(assignment);
+    try {
+      const r = await fetch(`/api/assignments/${assignment.id}/confidentiels`);
+      if (r.ok) {
+        const p = await r.json();
+        setSelectedAssignmentForPrint({
+          ...assignment,
+          simPin: p.data.simPin || undefined,
+          simPuk: p.data.simPuk || undefined
+        });
+      }
+    } catch {
+      // Révélation indisponible : la fiche s'affiche sans codes.
+    }
   };
 
   // Submit Return
@@ -734,7 +755,7 @@ export default function MaterialAssignmentModule({
                             <>
                               {/* Single consultation & print / PDF export button */}
                               <button
-                                onClick={() => setSelectedAssignmentForPrint(assignment)}
+                                onClick={() => handleOuvrirImpression(assignment)}
                                 title="Consulter la Fiche d'Affectation, Imprimer ou Télécharger en PDF"
                                 className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition border border-indigo-200 cursor-pointer shadow-2xs"
                               >
@@ -766,7 +787,7 @@ export default function MaterialAssignmentModule({
 
                               {/* Secondary view of initial assignment sheet */}
                               <button
-                                onClick={() => setSelectedAssignmentForPrint(assignment)}
+                                onClick={() => handleOuvrirImpression(assignment)}
                                 title="Consulter la Fiche d'Affectation Initiale"
                                 className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-slate-300 cursor-pointer"
                               >
@@ -1710,11 +1731,10 @@ export default function MaterialAssignmentModule({
                     onChange={(e) => setEquipmentCondition(e.target.value as EquipmentReturnCondition)}
                     className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-bold text-slate-800"
                   >
-                    <option value="Parfait état / Comme neuf">Parfait état / Comme neuf</option>
-                    <option value="Bon état d'usage">Bon état d'usage</option>
-                    <option value="Rayures / Usure légère">Rayures / Usure légère</option>
-                    <option value="Endommagé / Réparation requise">Endommagé / Réparation requise</option>
-                    <option value="Hors service / Rebut">Hors service / Rebut</option>
+                    <option value="Bon état">Bon état</option>
+                    <option value="Endommagé">Endommagé</option>
+                    <option value="Maintenance requise">Maintenance requise</option>
+                    <option value="Hors service">Hors service</option>
                   </select>
                 </div>
                 <div>

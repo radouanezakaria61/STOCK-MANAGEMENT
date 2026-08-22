@@ -6,22 +6,44 @@ import {
   stockIndisponible,
   dejaAffecte,
   retourDejaEffectue,
-  transitionInvalide
+  transitionInvalide,
+  ErreurMetier
 } from "../lib/erreurs.js";
-import { dateDuJour, numeroSuivant, pad3, versDate } from "../lib/ids.js";
+import { dateDuJour, prochainNumero, pad3, versDate } from "../lib/ids.js";
 import { nouvelleReferenceMouvement } from "./stock.service.js";
 import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
-import { exigerTransition, STATUTS_MATERIEL } from "../lib/machine-etats.js";
+import {
+  exigerTransition,
+  STATUTS_MATERIEL,
+  STATUTS_AFFECTATION,
+  ETATS_MATERIEL_CONSTATES,
+  LISTE_ETATS_CONSTATES,
+  estEtatDegrade,
+  type EtatMaterielConstate
+} from "../lib/machine-etats.js";
+import { chiffrer, dechiffrer } from "../lib/chiffrement.js";
 import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
 import type { ContexteActeur } from "../lib/acteur.js";
 
 // ── Lectures ──────────────────────────────────────────────────────────
 
+// Chantier 3.5 (P1.4) : PIN/PUK chiffrés au repos ne sortent JAMAIS dans
+// les listes ni dans la réponse de création ; leur consultation passe par
+// l'endpoint dédié (`revelerCodesConfidentiels`), réservé à la permission
+// « affectations.confidentiels » et tracé dans le journal d'audit.
+function masquerSecrets<T>(fiche: T): T {
+  const copie = { ...fiche } as Record<string, unknown>;
+  delete copie["simPin"];
+  delete copie["simPuk"];
+  return copie as T;
+}
+
 export async function listerAffectations() {
-  return prisma.affectation.findMany({
+  const fiches = await prisma.affectation.findMany({
     orderBy: { creeLe: "desc" },
     include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
   });
+  return fiches.map(masquerSecrets);
 }
 
 // ── Création d'une affectation (atomique) ─────────────────────────────
@@ -91,17 +113,13 @@ interface EtatArticleApres {
   maintenance: number;
 }
 
-// Génère la référence métier AFF-DSI-AAAA-NNN à partir des références de
-// l'année courante. L'année est dynamique ; la séquence repart à 001 chaque
-// 1er janvier. Correct uniquement sous `verrouillerReferences`.
+// Génère la référence métier AFF-DSI-AAAA-NNN depuis le compteur
+// transactionnel de l'année (`affectation-AAAA`, amorcé par la migration).
+// La séquence repart à 001 chaque 1er janvier ; l'unicité ne dépend plus
+// d'aucun scan ni verrou consultatif (chantier 3.5).
 async function prochaineReference(tx: Tx): Promise<string> {
   const annee = new Date().getFullYear();
-  const refsAnneeCourante = (
-    await tx.affectation.findMany({ select: { reference: true } })
-  )
-    .map((r) => r.reference)
-    .filter((ref) => ref.startsWith(`AFF-DSI-${annee}-`));
-  const numero = numeroSuivant(refsAnneeCourante, /(\d+)$/);
+  const numero = await prochainNumero(tx, `affectation-${annee}`);
   return `AFF-DSI-${annee}-${pad3(numero)}`;
 }
 
@@ -167,7 +185,7 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
       if (!precedente) {
         throw introuvable("Fiche précédente introuvable pour la réaffectation.");
       }
-      if (precedente.status !== "Restitué") {
+      if (precedente.status !== STATUTS_AFFECTATION.RESTITUEE) {
         throw requeteInvalide(
           "Une réaffectation suppose que la fiche précédente a été restituée."
         );
@@ -346,7 +364,7 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
         beneficiaryDepartment,
         beneficiarySite: beneficiarySite || "Berrechid",
         assignedDate: dateAffectation,
-        status: "Active",
+        status: STATUTS_AFFECTATION.ACTIVE,
         authorizedBy: authorizedBy || "Directeur Systèmes d'Information",
         dsiTitle: dsiTitle || "Département Systèmes D'Information",
 
@@ -354,8 +372,10 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
         hasSimCard: hasSimCard === true || Boolean(resourceType?.includes("SIM")),
         simOperator: simOperator || "IAM",
         simPhoneNumber: simPhoneNumber || beneficiaryPhone || "",
-        simPuk: simPuk || "",
-        simPin: simPin || "",
+        // Chantier 3.5 (P1.4) : les secrets partent chiffrés en base ;
+        // chaîne vide ou absente → NULL.
+        simPuk: chiffrer(simPuk || "") ?? "",
+        simPin: chiffrer(simPin || "") ?? "",
         hasSmartphone:
           hasSmartphone === true || Boolean(resourceType?.includes("SmartPhone")),
         deviceBrand: deviceBrand || lignesConstruites[0]?.brand || "",
@@ -406,10 +426,10 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
         articles: etatsApres.map((e) => `${e.reference} (${e.nom})`),
         reaffecteApres: referencePrecedente
       },
-      valeursApres: { statut: "Active", articles: etatsApres }
+      valeursApres: { statut: STATUTS_AFFECTATION.ACTIVE, articles: etatsApres }
     });
 
-    return { fiche: nouvelleFiche, etatsApres };
+    return { fiche: masquerSecrets(nouvelleFiche), etatsApres };
   });
 
   // Notifications APRÈS commit : alerter ne doit jamais annuler l'opération.
@@ -462,8 +482,19 @@ const ACTIONS_RESTITUTION = [
 // Un matériel constaté défectueux ne doit JAMAIS redevenir disponible
 // automatiquement (demande chantier 3, point 5) : la remise en stock est
 // forcée vers la maintenance.
-const REGEX_ETAT_DEGRADE =
-  /(endommag|mauvais état|mauvais etat|défectueu|defectueu|cassé|casse\b|hors service|\bhs\b)/i;
+// Chantier 3.5 (P2.9) : l'état constaté devient une LISTE FERMÉE
+// (ETATS_MATERIEL_CONSTATES) validée à la frontière — la décision critique
+// ne repose plus sur une regex devinant l'intention dans du texte libre.
+function normaliserEtatConstat(brut?: string | null): EtatMaterielConstate {
+  const valeur = (brut ?? "").trim();
+  if (valeur === "") return ETATS_MATERIEL_CONSTATES.BON_ETAT;
+  if ((LISTE_ETATS_CONSTATES as readonly string[]).includes(valeur)) {
+    return valeur as EtatMaterielConstate;
+  }
+  throw requeteInvalide(
+    `État du matériel inconnu : « ${valeur} ». États acceptés : ${LISTE_ETATS_CONSTATES.join(", ")}.`
+  );
+}
 
 export async function restituerAffectation(
   idOuReference: string,
@@ -492,7 +523,8 @@ export async function restituerAffectation(
       `Action de restitution inconnue : « ${actionNormale} ». Actions acceptées : ${ACTIONS_RESTITUTION.join(", ")}.`
     );
   }
-  const etatDegrade = REGEX_ETAT_DEGRADE.test(equipmentCondition ?? "");
+  const etatConstate = normaliserEtatConstat(equipmentCondition);
+  const etatDegrade = estEtatDegrade(etatConstate);
 
   const alertesAPublier: (() => Promise<void>)[] = [];
 
@@ -513,7 +545,7 @@ export async function restituerAffectation(
       include: { items: { orderBy: { id: "asc" } } }
     });
     if (!affectation) throw introuvable("Fiche d'affectation introuvable.");
-    if (affectation.status !== "Active") {
+    if (affectation.status !== STATUTS_AFFECTATION.ACTIVE) {
       throw retourDejaEffectue(
         `L'affectation ${affectation.reference} est déjà clôturée (statut : « ${affectation.status} ») : une seconde restitution est impossible.`
       );
@@ -525,7 +557,7 @@ export async function restituerAffectation(
         returnDate: dateRetour,
         cause: cause || "Départ collaborateur (Fin de contrat / Démission)",
         customCause: customCause || "",
-        equipmentCondition: equipmentCondition || "Bon état d'usage",
+        equipmentCondition: etatConstate,
         accessoriesReturned: accessoriesReturned || [],
         missingAccessories: missingAccessories || [],
         dataWiped: dataWiped === true,
@@ -539,7 +571,7 @@ export async function restituerAffectation(
 
     await tx.affectation.update({
       where: { id: affectation.id },
-      data: { status: "Restitué" }
+      data: { status: STATUTS_AFFECTATION.RESTITUEE }
     });
 
     // Verrouillage groupé des articles portés par les lignes.
@@ -616,7 +648,7 @@ export async function restituerAffectation(
                 : "Matériel envoyé en maintenance",
             message:
               actionFinale === "MAINTENANCE_OBLIGATOIRE"
-                ? `« ${stockItem.name} » (${stockItem.reference}) a été restitué en mauvais état (${equipmentCondition}). Il part en maintenance et ne redevient PAS disponible automatiquement.`
+                ? `« ${stockItem.name} » (${stockItem.reference}) a été restitué en mauvais état (${etatConstate}). Il part en maintenance et ne redevient PAS disponible automatiquement.`
                 : `« ${stockItem.name} » (${stockItem.reference}) est parti en maintenance/SAV suite à la restitution ${affectation.reference}.`,
             entite: "ArticleStock",
             entiteId: stockItem.id,
@@ -650,7 +682,7 @@ export async function restituerAffectation(
             reference: stockItem.reference,
             nom: stockItem.name,
             motif: `Rebut lors de la restitution ${affectation.reference}`,
-            etatConstate: equipmentCondition
+            etatConstate: etatConstate
           },
           valeursAvant: { statut: stockItem.status, quantity: stockItem.quantity },
           valeursApres: { statut: statutCible, quantity: (donnees["quantity"] as number) ?? stockItem.quantity }
@@ -668,7 +700,7 @@ export async function restituerAffectation(
           recipient: "Magasin Central IT",
           department: affectation.beneficiaryDepartment,
           date: dateRetour,
-          notes: `Restitution (${cause}) - État: ${equipmentCondition}. ${actionNormale}.`
+          notes: `Restitution (${cause}) - État: ${etatConstate}. ${actionNormale}.`
         }
       });
 
@@ -697,12 +729,13 @@ export async function restituerAffectation(
         beneficiaire: affectation.beneficiaryName,
         cause: retour.cause,
         etatConstate: retour.equipmentCondition,
+        etatConstateBrut: equipmentCondition ?? null,
         action: actionNormale,
         etatDegradeDetecte: etatDegrade,
         articles: resumeArticles
       },
-      valeursAvant: { statut: "Active" },
-      valeursApres: { statut: "Restitué", articles: resumeArticles }
+      valeursAvant: { statut: STATUTS_AFFECTATION.ACTIVE },
+      valeursApres: { statut: STATUTS_AFFECTATION.RESTITUEE, articles: resumeArticles }
     });
 
     return { assignment: assignmentMisAJour!, retour };
@@ -745,7 +778,7 @@ export async function annulerAffectation(
       include: { items: true }
     });
     if (!affectation) throw introuvable("Affectation introuvable.");
-    if (affectation.status !== "Active") {
+    if (affectation.status !== STATUTS_AFFECTATION.ACTIVE) {
       throw requeteInvalide(
         `Seule une fiche ACTIVE peut être annulée. La fiche ${affectation.reference} est « ${affectation.status} » : elle relève de l'historique, qui ne se modifie ni ne se supprime.`
       );
@@ -818,7 +851,7 @@ export async function annulerAffectation(
 
     await tx.affectation.update({
       where: { id: affectation.id },
-      data: { status: "Annulée" }
+      data: { status: STATUTS_AFFECTATION.ANNULEE }
     });
 
     await journaliserDansTx(tx, {
@@ -833,8 +866,8 @@ export async function annulerAffectation(
         beneficiaire: affectation.beneficiaryName,
         articles: affectation.items.map((l) => l.assetTag || l.name)
       },
-      valeursAvant: { statut: "Active" },
-      valeursApres: { statut: "Annulée" }
+      valeursAvant: { statut: STATUTS_AFFECTATION.ACTIVE },
+      valeursApres: { statut: STATUTS_AFFECTATION.ANNULEE }
     });
 
     return { reference: affectation.reference, alertesAPublier };
@@ -844,6 +877,62 @@ export async function annulerAffectation(
 
   return {
     message: `Affectation ${resultat.reference} annulée : le matériel est revenu au stock disponible. La fiche est conservée dans l'historique.`,
-    data: { reference: resultat.reference, statut: "Annulée" }
+    data: { reference: resultat.reference, statut: STATUTS_AFFECTATION.ANNULEE }
   };
+}
+
+// ── Consultation des codes confidentiels (PIN/PUK) ────────────────────
+// Chantier 3.5 (P1.4) : révélation explicite, permission
+// « affectations.confidentiels » exigée côté route, et TRACÉE — qui
+// consulte un code PIN laisse une empreinte datée dans le journal d'audit.
+export async function revelerCodesConfidentiels(
+  idOuReference: string,
+  acteur?: ContexteActeur
+) {
+  return prisma.$transaction(async (tx) => {
+    const fiche = await tx.affectation.findFirst({
+      where: { OR: [{ id: idOuReference }, { reference: idOuReference }] },
+      select: {
+        id: true,
+        reference: true,
+        beneficiaryName: true,
+        simPin: true,
+        simPuk: true
+      }
+    });
+    if (!fiche) throw introuvable("Fiche d'affectation introuvable.");
+
+    let pin: string | null;
+    let puk: string | null;
+    try {
+      pin = dechiffrer(fiche.simPin);
+      puk = dechiffrer(fiche.simPuk);
+    } catch {
+      throw new ErreurMetier(
+        500,
+        "Codes confidentiels illisibles : la clé de chiffrement a changé ou manque. Intervention administrateur requise.",
+        "SECRET_UNREADABLE"
+      );
+    }
+
+    await journaliserDansTx(tx, {
+      action: ACTIONS_AUDIT.CONFIDENTIAL_REVEALED,
+      utilisateurId: acteur?.utilisateurId ?? null,
+      adresseIp: acteur?.adresseIp ?? null,
+      agentUtilisateur: acteur?.agentUtilisateur ?? null,
+      entite: "Affectation",
+      entiteId: fiche.id,
+      details: {
+        reference: fiche.reference,
+        beneficiaire: fiche.beneficiaryName
+      }
+    });
+
+    return {
+      reference: fiche.reference,
+      beneficiaire: fiche.beneficiaryName,
+      simPin: pin,
+      simPuk: puk
+    };
+  });
 }

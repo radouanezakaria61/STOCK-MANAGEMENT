@@ -93,6 +93,7 @@ model Utilisateur {
 
   sessions      Session[]
   auditsJournal JournalAudit[]
+  notifications Notification[]
 
   @@index([societeId])
   @@index([roleId])
@@ -203,13 +204,39 @@ model Notification {
   entite      String?
   entiteId    String?   @map("entite_id")
   cibleOnglet String?   @map("cible_onglet") // onglet frontend à ouvrir au clic
+  // Chantier 3.5 : chaque notification vise UN destinataire (fan-out à la
+  // création) — la lecture par A ne marque plus « lue » pour B.
+  destinataireId String @map("destinataire_id")
+  destinataire   Utilisateur @relation(fields: [destinataireId], references: [id], onDelete: Restrict)
   creeLe      DateTime  @default(now()) @map("cree_le")
   lueLe       DateTime? @map("lue_le")
   resolueLe   DateTime? @map("resolue_le")
 
   @@index([statut, creeLe])
   @@index([type, entiteId])
+  @@index([destinataireId, statut])
   @@map("notifications")
+}
+
+// Compteurs de références métier (chantier 3.5) : remplace le scan O(n) des
+// tables par un incrément atomique UPDATE … RETURNING sous le verrou
+// consultatif. Un compteur par séquence (articles, mouvements, affectations
+// par année).
+model Compteur {
+  nom    String @id // "article" | "mouvement" | "affectation-2026"
+  valeur Int    @default(0)
+  @@map("compteurs")
+}
+
+// Limitation des tentatives de connexion PERSISTANTE (chantier 3.5) :
+// survit aux redémarrages du serveur, partagée entre instances. Même
+// politique qu'auparavant : 5 échecs / 15 min puis temporisation croissante.
+model TentativeConnexion {
+  cle            String    @id // ip|identifiant
+  echecs         Int       @default(0)
+  bloqueJusqua   DateTime? @map("bloque_jusqua")
+  fenetreOuverte DateTime  @default(now()) @map("fenetre_ouverte")
+  @@map("tentatives_connexion")
 }
 
 // Idempotence serveur (chantier 3) : le client envoie `X-Cle-Idempotence` ;

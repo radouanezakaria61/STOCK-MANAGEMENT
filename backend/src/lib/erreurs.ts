@@ -31,6 +31,11 @@ export const dejaAffecte = (message: string) =>
 export const retourDejaEffectue = (message: string) =>
   new ErreurMetier(409, message, "ASSIGNMENT_ALREADY_RETURNED");
 
+/** Restitution de plus d'unités qu'il n'y en a d'affectées — chantier 3.5 :
+ *  l'écrêtage silencieux du surplus disparaît. */
+export const retourExcedent = (message: string) =>
+  new ErreurMetier(409, message, "RETURN_QTY_EXCEEDS_ALLOCATED");
+
 /** Changement de statut hors machine à états. */
 export const transitionInvalide = (message: string) =>
   new ErreurMetier(409, message, "INVALID_STATUS_TRANSITION");

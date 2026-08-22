@@ -27,14 +27,15 @@ import {
   listerAffectations,
   creerAffectation,
   restituerAffectation,
-  annulerAffectation
+  annulerAffectation,
+  revelerCodesConfidentiels
 } from "../services/affectations.service.js";
 import { ZodError } from "zod";
 import { routerAuth } from "./auth.routes.js";
 import { chargerSession, exigerAuth, exigerPermission, verifierOrigine } from "../middleware/auth.js";
 import { avecIdempotence } from "../middleware/idempotence.js";
 import { acteurDepuis } from "../lib/acteur.js";
-import { listerNotifications, marquerCommeLue } from "../services/notifications.service.js";
+import { listerNotifications, marquerCommeLue, marquerToutCommeLues } from "../services/notifications.service.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -59,13 +60,15 @@ routerApi.use(exigerAuth);
 // Anti-CSRF léger : sur mutation, un en-tête Origin doit être autorisé.
 routerApi.use(verifierOrigine);
 
-routerApi.get("/data", h(async (_req, res) => {
+// Chantier 3.5 (P1.2) : les consultations sensibles exigent une permission
+// de lecture explicite (anonyme=401, rôle interdit=403, autorisé=200).
+routerApi.get("/data", exigerPermission("parc.consulter"), h(async (_req, res) => {
   const data = await obtenirDonneesGlobales();
   res.json({ status: "ok", data });
 }));
 
 // Sociétés — étiquette de rattachement (filtres), pas de suppression physique
-routerApi.get("/societes", h(async (_req, res) => {
+routerApi.get("/societes", exigerPermission("parc.consulter"), h(async (_req, res) => {
   res.json({ status: "ok", data: await listerSocietes() });
 }));
 routerApi.post("/societes", exigerPermission("societes.gerer"), h(async (req, res) => {
@@ -81,7 +84,7 @@ routerApi.post("/societes/:id/statut", exigerPermission("societes.gerer"), h(asy
   res.json(r);
 }));
 
-routerApi.get("/users", h(async (_req, res) => {
+routerApi.get("/users", exigerPermission("utilisateurs.consulter"), h(async (_req, res) => {
   res.json({ status: "ok", data: await listerUtilisateurs() });
 }));
 routerApi.post("/users", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
@@ -100,10 +103,10 @@ routerApi.delete("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (
   res.json(await supprimerUtilisateur(req.params["id"]!));
 }));
 
-routerApi.get("/stock", h(async (_req, res) => {
+routerApi.get("/stock", exigerPermission("parc.consulter"), h(async (_req, res) => {
   res.json({ status: "ok", data: await listerStock() });
 }));
-routerApi.get("/stock/search", h(async (req, res) => {
+routerApi.get("/stock/search", exigerPermission("parc.consulter"), h(async (req, res) => {
   const data = await rechercherStock({
     q: req.query["q"] as string | undefined,
     category: req.query["category"] as string | undefined,
@@ -129,8 +132,13 @@ routerApi.delete("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, r
   res.json(await supprimerArticle(req.params["id"]!, acteurDepuis(req)));
 }));
 
-routerApi.get("/assignments", h(async (_req, res) => {
+routerApi.get("/assignments", exigerPermission("parc.consulter"), h(async (_req, res) => {
   res.json({ status: "ok", data: await listerAffectations() });
+}));
+// Consultation des PIN/PUK chiffrés : permission dédiée + trace d'audit
+// (chantier 3.5, P1.4). Les listes n'exposent plus jamais ces secrets.
+routerApi.get("/assignments/:id/confidentiels", exigerPermission("affectations.confidentiels"), h(async (req, res) => {
+  res.json({ status: "ok", data: await revelerCodesConfidentiels(req.params["id"]!, acteurDepuis(req)) });
 }));
 routerApi.post("/assignments", exigerPermission("affectations.ecrire"), avecIdempotence(async (req, res) => {
   const r = await creerAffectation(req.body, acteurDepuis(req));
@@ -147,12 +155,17 @@ routerApi.delete("/assignments/:id", exigerPermission("affectations.ecrire"), h(
 }));
 
 // Notifications internes : consultables par tout utilisateur authentifié,
-// marquage « lue » individuel (les alertes RESOLUES se closent seules).
-routerApi.get("/notifications", h(async (_req, res) => {
-  res.json({ status: "ok", data: await listerNotifications() });
+// MAIS filtrées par destinataire (chantier 3.5) — chacun ne voit que les
+// siennes ; la lecture d'A n'affecte jamais B. Les alertes RESOLUES se
+// closent seules.
+routerApi.get("/notifications", h(async (req, res) => {
+  res.json({ status: "ok", data: await listerNotifications(req.contexteAuth!.utilisateurId) });
+}));
+routerApi.post("/notifications/lue-tout", h(async (req, res) => {
+  res.json(await marquerToutCommeLues(req.contexteAuth!.utilisateurId));
 }));
 routerApi.post("/notifications/:id/lue", h(async (req, res) => {
-  res.json(await marquerCommeLue(req.params["id"]!));
+  res.json(await marquerCommeLue(req.params["id"]!, req.contexteAuth!.utilisateurId));
 }));
 
 // ── Gestionnaire d'erreurs central ────────────────────────────────────
