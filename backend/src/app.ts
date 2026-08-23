@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { routerApi, gestionnaireErreurs, verifierBase } from "./routes/index.js";
 import { serialiser } from "./lib/serialisation.js";
 import { interpreterTrustProxy } from "./lib/confiance-proxy.js";
+import { middlewareRequeteId } from "./lib/journal-serveur.js";
 
 const app = express();
 
@@ -61,6 +62,11 @@ app.use(
 
 // Limite de corps : aucune route métier n'a besoin d'un payload massif.
 app.use(express.json({ limit: "100kb" }));
+
+// Priorité 6 : identifiant de requête — attribué AVANT toute journalisation
+// API, renvoyé au client via X-Requete-Id et apposé sur chaque ligne de log
+// émise pendant le traitement (AsyncLocalStorage, sans changer les signatures).
+app.use("/api", middlewareRequeteId);
 
 // Sérialisation unique des réponses API : Decimal → nombre, dates ISO,
 // champs internes filtrés — aucun renommage (AGENTS.md « Langue des clés »).
