@@ -1,13 +1,20 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { Societe, AppUser, ITStockItem, StockMovement, MaterialAssignment, ProfilUtilisateur, NotificationInterne } from "./types";
-import DashboardOverview from "./components/DashboardOverview";
-import SocietesManagement from "./components/SocietesManagement";
-import UserManagement from "./components/UserManagement";
-import ITStockManagement from "./components/ITStockManagement";
-import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
+
+// Code-splitting : chaque onglet lourd est chargé à la demande. Le chunk
+// principal ne contient plus que le shell de l'application (App, login,
+// notifications) — recharts, jspdf et les gros modules métier partent dans
+// des chunks distincts téléchargés à la première visite de l'onglet.
+const DashboardOverview = lazy(() => import("./components/DashboardOverview"));
+const SocietesManagement = lazy(() => import("./components/SocietesManagement"));
+const UserManagement = lazy(() => import("./components/UserManagement"));
+const ITStockManagement = lazy(() => import("./components/ITStockManagement"));
+const MaterialAssignmentModule = lazy(() => import("./components/MaterialAssignmentModule"));
+const JournalAuditModule = lazy(() => import("./components/JournalAuditModule"));
+// LoginPage et ChangePasswordModal restent dans le chunk principal : ils
+// s'affichent avant toute donnée et doivent être instantanés.
 import LoginPage from "./components/LoginPage";
 import ChangePasswordModal from "./components/ChangePasswordModal";
-import JournalAuditModule from "./components/JournalAuditModule";
 import { apiFetch } from "./api";
 import {
   LayoutDashboard,
@@ -558,6 +565,15 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Code-splitting : fallback pendant le téléchargement du chunk de l'onglet */}
+              <Suspense
+                fallback={
+                  <div className="h-64 flex flex-col items-center justify-center text-center space-y-3">
+                    <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+                    <p className="text-xs text-slate-500 font-semibold">Chargement du module...</p>
+                  </div>
+                }
+              >
               {activeTab === "dashboard" && (
                 <DashboardOverview
                   users={users}
@@ -613,6 +629,7 @@ export default function App() {
               {activeTab === "audit" && profil.permissions.includes("audit.consulter") && (
                 <JournalAuditModule permissions={profil.permissions} />
               )}
+              </Suspense>
             </div>
           )}
         </div>

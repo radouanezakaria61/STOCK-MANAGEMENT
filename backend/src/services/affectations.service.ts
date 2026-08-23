@@ -9,7 +9,7 @@ import {
   transitionInvalide,
   ErreurMetier
 } from "../lib/erreurs.js";
-import { dateDuJour, prochainNumero, pad3, versDate } from "../lib/ids.js";
+import { dateDuJour, prochainNumero, pad3, versDate, referenceAleatoire } from "../lib/ids.js";
 import { nouvelleReferenceMouvement } from "./stock.service.js";
 import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
 import {
@@ -336,11 +336,11 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
       // Saisie directe SIM / Smartphone sans sélection d'article en stock
       lignesConstruites.push({
         stockItemId: "STK-DIRECT",
-        assetTag: `IT-TEL-${Date.now().toString().slice(-4)}`,
+        assetTag: referenceAleatoire("IT-TEL", 3),
         name: `${deviceBrand || "Smartphone"} ${deviceModel || ""}`.trim(),
         brand: deviceBrand || "Générique",
         model: deviceModel || "",
-        serialNumber: deviceImei || `SN-${Date.now().toString().slice(-6)}`,
+        serialNumber: deviceImei || referenceAleatoire("SN"),
         category: "Périphériques & Accessoires",
         condition: "Neuf / Excellent état",
         accessories: ["Chargeur secteur", "Câble USB"]

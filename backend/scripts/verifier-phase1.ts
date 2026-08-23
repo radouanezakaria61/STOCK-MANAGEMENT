@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { purgerDonneesTechniques } from "../src/lib/purge-technique.js";
 import { interpreterTrustProxy } from "../src/lib/confiance-proxy.js";
+import { referenceAleatoire } from "../src/lib/ids.js";
 
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
@@ -697,6 +698,88 @@ async function main() {
     const dbNettoyage = new PrismaClient();
     await dbNettoyage.limitationIp.deleteMany({});
     await dbNettoyage.$disconnect();
+  }
+
+  // ══════════ M5 — IDENTIFIANTS ALÉATOIRES (burst concurrent) ══════════
+  console.log("\n── M5. Références crypto-random, plus de Date.now() ──");
+  {
+    verif(
+      "M5-0 unité : motif SN-XXXXXXXX",
+      /^SN-[0-9A-F]{8}$/.test(referenceAleatoire("SN")) &&
+        referenceAleatoire("SN") !== referenceAleatoire("SN")
+    );
+
+    const marqueM5 = `m5-${Date.now().toString(36)}`;
+
+    // 12 créations SANS serialNumber → fallback aléatoire côté service.
+    const creations = await Promise.all(
+      Array.from({ length: 12 }, (_, i) =>
+        admin.json("/api/stock", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: `${marqueM5} burst ${i}`,
+            category: "Consommables & Pièces",
+            brand: "Test M5",
+            quantity: 1,
+            minThreshold: 0,
+            unitPriceMAD: 10,
+            performedBy: "Vérificateur M5"
+          })
+        })
+      )
+    );
+    const okCreations = creations.filter((c) => c.status === 201);
+    verif("M5-1 12 créations concurrentes sans SN → 12 × 201", okCreations.length === 12);
+    const series = okCreations.map((c) => String(c.corps?.data?.serialNumber));
+    verif("M5-2 tous les SN suivent SN-XXXXXXXX", series.every((s) => /^SN-[0-9A-F]{8}$/.test(s)), JSON.stringify(series));
+    verif("M5-3 aucun doublon de SN dans le burst", new Set(series).size === series.length);
+
+    const idsArticles = okCreations.map((c) => c.corps?.data?.id).filter(Boolean);
+    await Promise.all(idsArticles.map((id) => admin.json(`/api/stock/${id}`, { method: "DELETE" })));
+
+    // 8 fiches SIM saisies en direct (sans article stock, sans IMEI) :
+    // assetTag IT-TEL-XXXXXX et serialNumber SN-XXXXXXXX uniques.
+    const fiches = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        admin.json("/api/assignments", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            templateType: "DSI-IT-01",
+            formCode: `FRM-M5-${i}`,
+            beneficiaryName: `Burst SIM ${i}`,
+            beneficiaryDepartment: "Technologies de l'Information",
+            beneficiarySite: "Siège",
+            authorizedBy: "Vérificateur M5",
+            dsiTitle: "Chef de Service DSI",
+            resourceType: "SmartPhone",
+            hasSmartphone: true,
+            deviceBrand: "Test M5"
+          })
+        })
+      )
+    );
+    const okFiches = fiches.filter((f) => f.status === 201);
+    verif("M5-4 8 affectations SIM concurrentes → 8 × 201", okFiches.length === 8);
+    const tags = okFiches.flatMap((f) =>
+      (f.corps?.data?.items ?? []).map((l: any) => String(l.assetTag))
+    );
+    const serieSims = okFiches.flatMap((f) =>
+      (f.corps?.data?.items ?? []).map((l: any) => String(l.serialNumber))
+    );
+    verif(
+      "M5-5 assetTags IT-TEL-XXXXXX uniques",
+      tags.length === 8 && tags.every((t) => /^IT-TEL-[0-9A-F]{6}$/.test(t)) && new Set(tags).size === 8,
+      JSON.stringify(tags)
+    );
+    verif(
+      "M5-6 SN SIM uniques et conformes",
+      serieSims.every((s) => /^SN-[0-9A-F]{8}$/.test(s)) && new Set(serieSims).size === serieSims.length
+    );
+
+    const idsFiches = okFiches.map((f) => f.corps?.data?.id).filter(Boolean);
+    await Promise.all(idsFiches.map((id) => admin.json(`/api/assignments/${id}`, { method: "DELETE" })));
   }
 
   // ══════════ M2 — LIMITATION PAR ADRESSE IP ══════════

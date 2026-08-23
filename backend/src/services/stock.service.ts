@@ -6,7 +6,7 @@ import {
   type Tx
 } from "../lib/prisma.js";
 import { introuvable, requeteInvalide, conflit, stockIndisponible, retourExcedent } from "../lib/erreurs.js";
-import { dateDuJour, prochainNumero } from "../lib/ids.js";
+import { dateDuJour, prochainNumero, referenceAleatoire } from "../lib/ids.js";
 import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
 import { exigerTransition, STATUTS_MATERIEL, TYPES_MOUVEMENT, type TypeMouvement } from "../lib/machine-etats.js";
 import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
@@ -73,30 +73,36 @@ export async function rechercherStock(filtres: FiltresRecherche) {
   if (availableOnly) where.availableQty = { gt: 0 };
   if (category && category !== "Tous") where.category = category;
 
-  let resultats: ArticleStock[] = await prisma.articleStock.findMany({ where });
-
+  // Recherche poussée en base (insensible à la casse, `contains`) au lieu
+  // d'un findMany complet suivi d'un filtre JS : le coût devient proportionnel
+  // aux résultats et non à toute la table (qui ne fait que croître — l'historique
+  // ne se supprime pas). Les champs specs JSON restent filtrés côté service,
+  // mais seulement sur les lignes déjà réduites par les autres critères.
   if (q) {
-    resultats = resultats.filter(
-      (item) =>
-        item.name?.toLowerCase().includes(q) ||
-        item.brand?.toLowerCase().includes(q) ||
-        item.model?.toLowerCase().includes(q) ||
-        item.serialNumber?.toLowerCase().includes(q) ||
-        item.assetTag?.toLowerCase().includes(q) ||
-        item.category?.toLowerCase().includes(q) ||
-        specsContient(item, "cpu", q) ||
-        specsContient(item, "ram", q) ||
-        specsContient(item, "storage", q)
-    );
+    const champTexte = { contains: q, mode: "insensitive" as const };
+
+    // Recherche SQL insensible à la casse sur les champs texte ET dans les
+    // clés JSON specs (cpu/ram/storage) via les opérateurs JSON natifs de
+    // PostgreSQL — plus aucun findMany complet suivi d'un filtre JS.
+    return prisma.articleStock.findMany({
+      where: {
+        ...where,
+        OR: [
+          { name: champTexte },
+          { brand: champTexte },
+          { model: champTexte },
+          { serialNumber: champTexte },
+          { assetTag: champTexte },
+          { category: champTexte },
+          { specs: { path: ["cpu"], string_contains: q } },
+          { specs: { path: ["ram"], string_contains: q } },
+          { specs: { path: ["storage"], string_contains: q } }
+        ]
+      }
+    });
   }
 
-  return resultats;
-}
-
-function specsContient(item: ArticleStock, cle: string, q: string): boolean {
-  const specs = item.specs as Record<string, unknown> | null;
-  const valeur = specs?.[cle];
-  return typeof valeur === "string" && valeur.toLowerCase().includes(q);
+  return prisma.articleStock.findMany({ where });
 }
 
 function instantaneArticle(a: ArticleStock): Record<string, unknown> {
@@ -192,7 +198,7 @@ export async function creerArticle(data: EntreeArticle, acteur?: ContexteActeur)
           category,
           brand: brand || "Générique",
           model: model || "",
-          serialNumber: serialNumber || `SN-${Date.now().toString().slice(-6)}`,
+          serialNumber: serialNumber || referenceAleatoire("SN"),
           quantity: qty,
           availableQty: qty,
           allocatedQty: 0,

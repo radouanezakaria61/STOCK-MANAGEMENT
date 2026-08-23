@@ -3,6 +3,7 @@
 // ne subsistent que dans les champs JSON d'affichage (assignedTo…).
 // Chantier 3.5 : les numéros de référence proviennent d'un compteur
 // transactionnel (`compteurs`) — plus aucun scan O(n) des tables.
+import crypto from "node:crypto";
 import { ErreurMetier } from "./erreurs.js";
 import type { Tx } from "./prisma.js";
 
@@ -64,4 +65,17 @@ export function numeroSuivant(references: string[], matcher: RegExp): number {
 
 export function pad3(n: number): string {
   return String(n).padStart(3, "0");
+}
+
+/**
+ * M5 (Phase 1) : suffixe aléatoire cryptographique en hexadécimal majuscule.
+ * Remplace les identifiants dérivés de Date.now() (SN-483920, IT-TEL-1234) :
+ * deux créations dans la MÊME milliseconde — cas réel lors d'un import ou
+ * d'un burst d'appels concurrents — produisaient le même identifiant.
+ * `octets = 4` → 8 caractères hex (≈4,3 milliards de combinaisons), largement
+ * au-delà de tout besoin de traçabilité interne ; l'unicité reste de toute
+ * façon garantie par les contraintes de base quand elle est exigée.
+ */
+export function referenceAleatoire(prefixe: string, octets = 4): string {
+  return `${prefixe}-${crypto.randomBytes(octets).toString("hex").toUpperCase()}`;
 }
