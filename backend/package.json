@@ -11,7 +11,8 @@
         "db:migrate": "prisma migrate dev",
         "db:deploy": "prisma migrate deploy",
         "db:seed": "tsx prisma/seed.ts",
-        "db:studio": "prisma studio"
+        "db:studio": "prisma studio",
+    "test": "vitest run"
     },
     "prisma": {
         "seed": "tsx prisma/seed.ts"
@@ -29,7 +30,8 @@
         "@types/node": "^22.14.0",
         "prisma": "6.12.0",
         "tsx": "^4.21.0",
-        "typescript": "~5.8.2"
+        "typescript": "~5.8.2",
+        "vitest": "^4.1.11"
     },
     "allowScripts": {
         "@prisma/client@6.19.3": true,

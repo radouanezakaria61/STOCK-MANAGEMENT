@@ -93,7 +93,10 @@ export default function App() {
   ) => {
     setNotificationsLocales((prev) => [
       {
-        id: `local-${Date.now()}`,
+        // M5 (Phase 1) : identifiant cryptographique — la fusion du commit
+        // 691e5f5 avait réintroduit Date.now() (collision possible dans la
+        // même milliseconde) ; correctif ré-appliqué.
+        id: `local-${crypto.randomUUID()}`,
         type: "INTERVENTION_ADMIN",
         titre: title,
         message: description,

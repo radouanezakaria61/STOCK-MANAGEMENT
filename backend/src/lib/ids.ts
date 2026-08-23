@@ -19,17 +19,28 @@ export function dateDuJour(): string {
 
 /** Convertit une entrée « yyyy-MM-dd » (formulaire) en Date midi UTC.
  *  Chantier 3.5 : une valeur FOURNIE mais invalide lève une erreur 400 —
- *  plus jamais de bascule silencieuse vers la date du jour. */
+ *  plus jamais de bascule silencieuse vers la date du jour.
+ *  Corrections restantes : la relecture UTC des composants refuse aussi les
+ *  débordements de calendrier (« 2026-02-30 » → 2 mars) que le parseur V8
+ *  tolère silencieusement. */
 export function versDate(iso?: string | null): Date | undefined {
   if (iso == null || iso === "") return undefined;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || isNaN(new Date(`${iso}T12:00:00Z`).getTime())) {
+  const morceaux = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const date = morceaux ? new Date(`${iso}T12:00:00Z`) : new Date(NaN);
+  const valide =
+    morceaux !== null &&
+    !isNaN(date.getTime()) &&
+    Number(morceaux[1]) === date.getUTCFullYear() &&
+    Number(morceaux[2]) === date.getUTCMonth() + 1 &&
+    Number(morceaux[3]) === date.getUTCDate();
+  if (!valide) {
     throw new ErreurMetier(
       400,
       `Date invalide : « ${iso} ». Format attendu : AAAA-MM-JJ.`,
       "DATE_INVALIDE"
     );
   }
-  return new Date(`${iso}T12:00:00Z`);
+  return date;
 }
 
 /**
