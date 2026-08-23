@@ -58,9 +58,9 @@ const MATRICE_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     "audit.consulter",
     "parametres.gerer"
   ],
-  IT_MANAGER: ["parc.consulter", "utilisateurs.consulter", "stock.ecrire", "affectations.ecrire", "affectations.confidentiels", "audit.consulter"],
+  IT_MANAGER: ["parc.consulter", "utilisateurs.consulter", "affectations.confidentiels", "audit.consulter"],
   IT_TECHNICIAN: ["parc.consulter", "stock.ecrire", "affectations.ecrire"],
-  STOCK_MANAGER: ["parc.consulter", "stock.ecrire", "affectations.ecrire", "societes.gerer"],
+  STOCK_MANAGER: ["parc.consulter", "stock.ecrire", "societes.gerer"],
   AUDITOR: ["parc.consulter", "utilisateurs.consulter", "audit.consulter"],
   EMPLOYEE: ["parc.consulter"]
 };
