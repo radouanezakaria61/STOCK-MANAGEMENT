@@ -9,9 +9,12 @@
  * garantir un état connu, puis exécute des contrôles HTTP réels.
  */
 import "dotenv/config";
-import { execSync } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import { purgerDonneesTechniques } from "../src/lib/purge-technique.js";
+import { interpreterTrustProxy } from "../src/lib/confiance-proxy.js";
 
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
@@ -598,6 +601,102 @@ async function main() {
       `status=${lectureSansMarqueur.status}`
     );
     await lectureSansMarqueur.text();
+  }
+
+  // ══════════ M4 — CONFIANCE PROXY STRICTE & DÉPLOIEMENT ══════════
+  console.log("\n── M4. TRUST_PROXY validé, HOST, avertissement production ──");
+  {
+    // 1. Unité : la grammaire Express est acceptée, le reste est rejeté.
+    verif("M4-1 absent/vide → aucune confiance", interpreterTrustProxy(undefined) === false && interpreterTrustProxy("") === false);
+    verif("M4-2 saut numérique", interpreterTrustProxy("1") === 1);
+    verif(
+      "M4-3 mot-clé et CIDR acceptés",
+      interpreterTrustProxy("loopback") === "loopback" && interpreterTrustProxy("10.0.0.0/8") === "10.0.0.0/8"
+    );
+    const combo = interpreterTrustProxy("1, loopback");
+    verif("M4-4 combinaison → liste", Array.isArray(combo) && combo.length === 2);
+    let rejet = false;
+    try {
+      interpreterTrustProxy("banane");
+    } catch {
+      rejet = true;
+    }
+    verif("M4-5 valeur farfelue → erreur explicite", rejet);
+    let zeroRejete = false;
+    try {
+      interpreterTrustProxy("0");
+    } catch {
+      zeroRejete = true;
+    }
+    verif("M4-6 « 0 » saut refusé (au moins 1)", zeroRejete);
+
+    // 2. Intégration : un démarrage avec TRUST_PROXY invalide ÉCHOUE vite.
+    const argsTsx = [
+      "--require",
+      path.join(process.cwd(), "node_modules", "tsx", "dist", "preflight.cjs"),
+      "--import",
+      pathToFileURL(path.join(process.cwd(), "node_modules", "tsx", "dist", "loader.mjs")).href,
+      "src/server.ts"
+    ];
+    const echecDemarrage = spawnSync(process.execPath, argsTsx, {
+      env: { ...process.env, PORT: "3200", TRUST_PROXY: "banane" },
+      encoding: "utf8",
+      timeout: 25_000
+    });
+    const sortie = `${echecDemarrage.stdout ?? ""}${echecDemarrage.stderr ?? ""}`;
+    verif(
+      "M4-7 démarrage avec TRUST_PROXY invalide → échec immédiat",
+      (echecDemarrage.status ?? 1) !== 0 && sortie.includes("banane"),
+      `status=${echecDemarrage.status}`
+    );
+
+    // 3. Avec TRUST_PROXY=1, l'IP cliente vient de X-Forwarded-For.
+    const enfantFiable = spawn(process.execPath, argsTsx, {
+      env: { ...process.env, PORT: "3201", TRUST_PROXY: "1" },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let port3201Actif = false;
+    for (let i = 0; i < 30 && !port3201Actif; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        const sonde = await fetch("http://localhost:3201/api/auth/me");
+        if (sonde.status === 401) port3201Actif = true;
+        await sonde.text();
+      } catch {
+        /* pas encore prêt */
+      }
+    }
+    if (port3201Actif) {
+      await fetch("http://localhost:3201/api/auth/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-requested-with": "XMLHttpRequest",
+          "x-forwarded-for": "9.9.9.9"
+        },
+        body: JSON.stringify({ identifiant: `m4-${Date.now()}@test`, motDePasse: "Faux-Mdp-M4-1" })
+      }).then((r) => r.text());
+      const db = new PrismaClient();
+      const ligneProxy = await db.limitationIp.findUnique({ where: { cle: "9.9.9.9" } });
+      await db.limitationIp.deleteMany({ where: { cle: "9.9.9.9" } });
+      await db.$disconnect();
+      verif(
+        "M4-8 X-Forwarded-For consommé quand le proxy est déclaré",
+        ligneProxy !== null
+      );
+    } else {
+      verif("M4-8 instance TRUST_PROXY=1 démarrée sur 3201", false, "port jamais ouvert");
+    }
+    enfantFiable.kill();
+    await new Promise((r) => setTimeout(r, 400));
+
+    // 4. Sans confiance déclarée, XFF reste ignoré (preuve complémentaire à
+    //    M2-4 sur l'instance principale) : rien à faire ici, déjà couvert.
+
+    // Nettoyage : aucune trace IP résiduelle des sondes.
+    const dbNettoyage = new PrismaClient();
+    await dbNettoyage.limitationIp.deleteMany({});
+    await dbNettoyage.$disconnect();
   }
 
   // ══════════ M2 — LIMITATION PAR ADRESSE IP ══════════

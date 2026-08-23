@@ -3,16 +3,17 @@ import path from "path";
 import helmet from "helmet";
 import { routerApi, gestionnaireErreurs, verifierBase } from "./routes/index.js";
 import { serialiser } from "./lib/serialisation.js";
+import { interpreterTrustProxy } from "./lib/confiance-proxy.js";
 
 const app = express();
 
 // Chantier 3.5 (P1.1) : la confiance aux en-têtes X-Forwarded-* est
 // EXPLICITE et désactivée par défaut. En déploiement direct LAN/VPN, un
 // client peut forger X-Forwarded-For : il ne doit jamais être cru.
-// Derrière un reverse proxy de confiance, définir TRUST_PROXY au nombre
-// de sauts (ex. TRUST_PROXY=1) — Express détermine alors l'IP cliente.
-const sautsProxy = Number(process.env.TRUST_PROXY ?? "");
-app.set("trust proxy", Number.isInteger(sautsProxy) && sautsProxy >= 0 ? sautsProxy : false);
+// M4 (Phase 1) : TRUST_PROXY accepte désormais la grammaire complète
+// d'Express (sauts, mots-clés, IP, CIDR, liste) et est VALIDÉ strictement —
+// une valeur invalide fait échouer le démarrage au lieu d'être ignorée.
+app.set("trust proxy", interpreterTrustProxy(process.env.TRUST_PROXY));
 
 // En-têtes HTTP de sécurité de base.
 // H5 (Phase 1) : la CSP est ACTIVE et adaptée aux besoins réels du SPA
