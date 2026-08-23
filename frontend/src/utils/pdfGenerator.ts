@@ -1,11 +1,16 @@
-import jsPDF from "jspdf";
 import { MaterialAssignment, AssignedItemDetail } from "../types";
 import { getDistraLogoDataUri } from "./distraLogo";
+
+// jsPDF est volumineux (~350 ko minifiés) : il est chargé à la demande au
+// premier export PDF (import dynamique), ce qui retire la bibliothèque du
+// chunk principal de l'application. Toutes les fonctions d'export sont donc
+// asynchrones — voir les points d'appel dans components/affectations/.
 
 /**
  * Generate and download an exact replica of the Distra "FORMULAIRE DE DÉCHARGE MATÉRIEL INFORMATIQUE" (Image.png)
  */
-export function exportDistraITEquipmentToPDF(assignment: MaterialAssignment) {
+export async function exportDistraITEquipmentToPDF(assignment: MaterialAssignment) {
+  const { default: jsPDF } = await import("jspdf");
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -381,7 +386,8 @@ export function exportDistraITEquipmentToPDF(assignment: MaterialAssignment) {
 /**
  * Generate and download an exact, professional PDF for the Distra "DÉCHARGE D'AFFECTATION DE MATÉRIEL IT" (Formulaire IT-02)
  */
-export function exportDistraSimSmartphoneToPDF(assignment: MaterialAssignment) {
+export async function exportDistraSimSmartphoneToPDF(assignment: MaterialAssignment) {
+  const { default: jsPDF } = await import("jspdf");
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -834,7 +840,7 @@ export function exportDistraSimSmartphoneToPDF(assignment: MaterialAssignment) {
 /**
  * Generate and download an official PDF for Material Assignment (Fiche d'Affectation)
  */
-export function exportAssignmentToPDF(assignment: MaterialAssignment) {
+export async function exportAssignmentToPDF(assignment: MaterialAssignment) {
   // If this assignment is explicitly a Distra SIM/Smartphone form, generate the Distra SIM/Smartphone replica
   if (
     assignment.templateType === "DISTRA_SIM_SMARTPHONE" ||
@@ -843,21 +849,22 @@ export function exportAssignmentToPDF(assignment: MaterialAssignment) {
     assignment.resourceType === "Carte SIM + SmartPhone" ||
     (assignment.hasSimCard && !assignment.equipmentType)
   ) {
-    exportDistraSimSmartphoneToPDF(assignment);
+    await exportDistraSimSmartphoneToPDF(assignment);
     return;
   }
 
   // Otherwise, default to the official Distra IT Equipment Décharge (matching image.png)
-  exportDistraITEquipmentToPDF(assignment);
+  await exportDistraITEquipmentToPDF(assignment);
 }
 
 /**
  * Generate and download an official PDF for Material Return (Décharge & Restitution)
  */
-export function exportReturnToPDF(assignment: MaterialAssignment) {
+export async function exportReturnToPDF(assignment: MaterialAssignment) {
   if (!assignment.returnRecord) return;
   const returnRec = assignment.returnRecord;
 
+  const { default: jsPDF } = await import("jspdf");
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
@@ -1159,8 +1166,4 @@ export function exportReturnToPDF(assignment: MaterialAssignment) {
   const filename = `Decharge_Restitution_${returnRec.id}_${assignment.beneficiaryName.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`;
   doc.save(filename);
 }
-
-/**
- * Generate and download an official PDF for Purchase Order / Demande d'Achat (DA / PO)
- */
 
