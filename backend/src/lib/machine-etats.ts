@@ -73,7 +73,6 @@ export const TYPES_MOUVEMENT = {
 } as const;
 
 export type TypeMouvement = (typeof TYPES_MOUVEMENT)[keyof typeof TYPES_MOUVEMENT];
-export const LISTE_TYPES_MOUVEMENT = Object.values(TYPES_MOUVEMENT);
 
 // ── Statuts de fiche d'affectation (contrainte CHECK côté base) ─────────
 export const STATUTS_AFFECTATION = {

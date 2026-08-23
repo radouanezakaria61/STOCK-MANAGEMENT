@@ -69,9 +69,4 @@ export function serialiser<T>(donnees: T): unknown {
   return transformer(donnees);
 }
 
-/** Convertit un montant (Decimal Prisma ou nombre) en nombre JS pour les calculs. */
-export function enNombre(valeur: unknown): number {
-  if (valeur instanceof Prisma.Decimal) return valeur.toNumber();
-  const n = Number(valeur);
-  return isNaN(n) ? 0 : n;
-}
+

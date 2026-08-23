@@ -66,7 +66,3 @@ export function dechiffrer(valeur: string | null | undefined): string | null {
   ]).toString("utf8");
 }
 
-/** Une valeur est-elle déjà chiffrée ? (utile à la migration idempotente) */
-export function estChiffree(valeur: string | null | undefined): boolean {
-  return typeof valeur === "string" && valeur.startsWith(`${PREFIXE}:`);
-}
