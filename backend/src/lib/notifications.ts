@@ -1,4 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { journaliser } from "./journal-serveur.js";
+
+const journalNotifications = journaliser("notifications");
 import { prisma } from "./prisma.js";
 
 // Chantier 3 → 3.5 — notifications internes.
@@ -78,7 +81,7 @@ export async function notifier(donnees: DonneesNotification): Promise<void> {
       ) {
         continue; // déjà ouverte pour ce destinataire : déduplication
       }
-      console.error(`Notification non envoyée à ${destinataireId} :`, erreur);
+      journalNotifications.erreur(`Notification non envoyée à ${destinataireId}`, erreur);
     }
   }
 }

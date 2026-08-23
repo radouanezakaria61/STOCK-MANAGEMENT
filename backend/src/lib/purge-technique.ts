@@ -1,4 +1,7 @@
 import { prisma } from "./prisma.js";
+import { journaliser } from "./journal-serveur.js";
+
+const journalPurge = journaliser("purge");
 
 // ══════════════════════════════════════════════════════════════════════
 // M3 (Phase 1) — purge maîtrisée des DONNÉES TECHNIQUES expirées.
@@ -97,8 +100,8 @@ export function demarrerPurgePlanifiee(): () => void {
     passeEnCours = true;
     try {
       const bilan = await purgerDonneesTechniques();
-      console.log(
-        `[purge] données techniques : ${bilan.sessionsPurgees} session(s), ` +
+      journalPurge.info(
+        `données techniques : ${bilan.sessionsPurgees} session(s), ` +
           `${bilan.requetesIdempotentesPurgees} clé(s) d'idempotence, ` +
           `${bilan.tentativesConnexionPurgees} compteur(s) de connexion, ` +
           `${bilan.limitationIpPurgees} compteur(s) IP.`
@@ -106,7 +109,7 @@ export function demarrerPurgePlanifiee(): () => void {
     } catch (erreur) {
       // La purge est un service rendu, jamais une exigence : un échec est
       // loggé et retenté à la prochaine échéance.
-      console.error("[purge] échec de la purge planifiée :", erreur);
+      journalPurge.erreur("échec de la purge planifiée", erreur);
     } finally {
       passeEnCours = false;
     }

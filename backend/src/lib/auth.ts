@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from "crypto";
 import type { Request, Response } from "express";
+import { journaliser } from "./journal-serveur.js";
+
+const journalAuth = journaliser("auth");
 import { hash as argonHacher, verify as argonVerifier } from "@node-rs/argon2";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
@@ -225,6 +228,6 @@ export async function journaliserAudit(entree: EntreeAudit, req?: Request): Prom
       }
     });
   } catch (erreur) {
-    console.error("Écriture au journal d'audit impossible :", erreur);
+    journalAuth.erreur("Écriture au journal d'audit impossible", erreur);
   }
 }

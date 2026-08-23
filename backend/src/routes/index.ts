@@ -1,4 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
+import { journaliser } from "../lib/journal-serveur.js";
+
+const journalHttp = journaliser("http");
 import { prisma } from "../lib/prisma.js";
 import { ErreurMetier } from "../lib/erreurs.js";
 import { obtenirDonneesGlobales } from "../services/dashboard.service.js";
@@ -247,7 +250,7 @@ export function gestionnaireErreurs(
     });
     return;
   }
-  console.error("Erreur serveur inattendue :", err);
+  journalHttp.erreur("Erreur serveur inattendue", err);
   res.status(500).json({ error: "Erreur interne du serveur." });
 }
 
@@ -257,7 +260,7 @@ export async function verifierBase(): Promise<boolean> {
     await prisma.$queryRaw`SELECT 1`;
     return true;
   } catch (e) {
-    console.error("Connexion PostgreSQL impossible :", e instanceof Error ? e.message : e);
+    journalHttp.erreur("Connexion PostgreSQL impossible", e instanceof Error ? e : new Error(String(e)));
     return false;
   }
 }
