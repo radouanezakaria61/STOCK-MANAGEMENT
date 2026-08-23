@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { app, verifierBase } from "./app.js";
+import { demarrerPurgePlanifiee } from "./lib/purge-technique.js";
 
 dotenv.config();
 
@@ -15,9 +16,31 @@ async function demarrer() {
     process.exit(1);
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // M3 (Phase 1) : purge planifiée des données techniques expirées
+  // (sessions, clés d'idempotence, compteurs du limiteur de connexion).
+  const arreterPurge = demarrerPurgePlanifiee();
+
+  const serveur = app.listen(PORT, "0.0.0.0", () => {
     console.log(`API Server (backend) actif sur http://0.0.0.0:${PORT}`);
   });
+
+  // Arrêt propre (M4 : le reverse proxy enverra SIGTERM au rechargement) :
+  // on cesse d'accepter les connexions, on attend les requêtes en vol,
+  // puis on coupe les planificateurs.
+  const arreterProprement = (signal: string) => {
+    console.log(`\nSignal ${signal} reçu : arrêt en cours…`);
+    serveur.close(() => {
+      arreterPurge();
+      process.exit(0);
+    });
+    // Filet de sécurité si une requête reste pendue.
+    setTimeout(() => {
+      arreterPurge();
+      process.exit(0);
+    }, 5_000).unref();
+  };
+  process.once("SIGINT", () => arreterProprement("SIGINT"));
+  process.once("SIGTERM", () => arreterProprement("SIGTERM"));
 }
 
 demarrer();

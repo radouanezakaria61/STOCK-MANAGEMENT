@@ -10,6 +10,8 @@
  */
 import "dotenv/config";
 import { execSync } from "node:child_process";
+import { PrismaClient } from "@prisma/client";
+import { purgerDonneesTechniques } from "../src/lib/purge-technique.js";
 
 const BASE = process.env.API_BASE || "http://localhost:3001";
 
@@ -423,6 +425,99 @@ async function main() {
     } else {
       verif("M6-12 restitution avec champs hérités (strip)", false, "aucune fiche Active seedée");
     }
+  }
+
+  // ══════════ M3 — PURGE DES DONNÉES TECHNIQUES EXPIRÉES ══════════
+  console.log("\n── M3. Purge maîtrisée des données techniques ──");
+  {
+    const db = new PrismaClient();
+    const maintenant = Date.now();
+
+    // Jeu de contrôle : à purger vs à conserver, pour chaque table technique.
+    const sessionMorte = await db.session.create({
+      data: {
+        tokenHash: `purge-morte-${maintenant}`,
+        utilisateurId: (await db.utilisateur.findFirstOrThrow({ where: { username: "zakaria.radouane" } })).id,
+        expireLe: new Date(maintenant - 2 * 3_600_000) // expirée depuis 2 h
+      }
+    });
+    const sessionVivante = await db.session.create({
+      data: {
+        tokenHash: `purge-vive-${maintenant}`,
+        utilisateurId: (await db.utilisateur.findFirstOrThrow({ where: { username: "zakaria.radouane" } })).id,
+        expireLe: new Date(maintenant + 3_600_000)
+      }
+    });
+    await db.requeteIdempotente.create({
+      data: { cle: `purge-vieille-${maintenant}`, empreinteCorps: "x", creeLe: new Date(maintenant - 25 * 3_600_000) }
+    });
+    await db.requeteIdempotente.create({
+      data: { cle: `purge-recente-${maintenant}`, empreinteCorps: "x", creeLe: new Date(maintenant - 3_600_000) }
+    });
+    await db.tentativeConnexion.create({
+      data: { cle: `purge-test|compteur-mort-${maintenant}`, echecs: 0, fenetreOuverte: new Date(maintenant - 2 * 3_600_000) }
+    });
+    await db.tentativeConnexion.create({
+      data: { cle: `purge-test|compteur-actif-${maintenant}`, echecs: 3, fenetreOuverte: new Date(maintenant - 10 * 60_000) }
+    });
+    await db.tentativeConnexion.create({
+      data: {
+        cle: `purge-test|blocage-termine-${maintenant}`,
+        echecs: 6,
+        fenetreOuverte: new Date(maintenant - 26 * 3_600_000),
+        bloqueJusqua: new Date(maintenant - 25 * 3_600_000)
+      }
+    });
+
+    const bilan = await purgerDonneesTechniques();
+
+    verif(
+      "M3-1 session expirée (>1 h de grâce) purgée",
+      bilan.sessionsPurgees >= 1 && (await db.session.findUnique({ where: { id: sessionMorte.id } })) === null
+    );
+    verif(
+      "M3-2 session vivante conservée",
+      (await db.session.findUnique({ where: { id: sessionVivante.id } })) !== null
+    );
+    const vieilleCle = (await db.requeteIdempotente.findUnique({ where: { cle: `purge-vieille-${maintenant}` } })) === null;
+    const recenteCle = (await db.requeteIdempotente.findUnique({ where: { cle: `purge-recente-${maintenant}` } })) !== null;
+    verif("M3-3 clé d'idempotence >24 h purgée, <24 h conservée", vieilleCle && recenteCle);
+    const mortCompteur =
+      (await db.tentativeConnexion.findUnique({ where: { cle: `purge-test|compteur-mort-${maintenant}` } })) === null;
+    const actifCompteur =
+      (await db.tentativeConnexion.findUnique({ where: { cle: `purge-test|compteur-actif-${maintenant}` } })) !== null;
+    const blocageTermine =
+      (await db.tentativeConnexion.findUnique({ where: { cle: `purge-test|blocage-termine-${maintenant}` } })) === null;
+    verif(
+      "M3-4 limiteur connexion : compteurs morts purgés, compteur actif conservé",
+      mortCompteur && actifCompteur && blocageTermine
+    );
+
+    // Le journal d'audit et les notifications ne sont JAMAIS touchés.
+    const journalAvant = await db.journalAudit.count();
+    const notificationsAvant = await db.notification.count();
+    await purgerDonneesTechniques();
+    verif(
+      "M3-5 journal d'audit intouché (immuabilité)",
+      (await db.journalAudit.count()) === journalAvant
+    );
+    verif(
+      "M3-6 notifications intouchées (politique produit)",
+      (await db.notification.count()) === notificationsAvant
+    );
+
+    // Nettoyage du jeu de test (lignes volontairement conservées).
+    await db.session.delete({ where: { id: sessionVivante.id } }).catch(() => undefined);
+    await db.requeteIdempotente.delete({ where: { cle: `purge-recente-${maintenant}` } }).catch(() => undefined);
+    await db.tentativeConnexion
+      .delete({ where: { cle: `purge-test|compteur-actif-${maintenant}` } })
+      .catch(() => undefined);
+
+    // La session admin utilisée par la suite reste fonctionnelle après purge.
+    const auditApresPurge = await admin.json("/api/audit?limite=1");
+    verif("M3-7 API toujours opérationnelle après purge", auditApresPurge.status === 200, `${auditApresPurge.status}`);
+
+    await db.$disconnect();
   }
 
   // ══════════ BILAN ══════════
