@@ -95,6 +95,28 @@ export interface ProfilUtilisateur {
   permissions: string[];
 }
 
+// ── H4 (Phase 1) — journal d'audit consultable (GET /api/audit) ────────
+
+export interface EntreeJournalAudit {
+  id: string;
+  action: string;
+  utilisateurId: string | null;
+  utilisateur?: { id: string; username: string; name: string } | null;
+  identifiantTente: string | null;
+  entite: string | null;
+  entiteId: string | null;
+  details?: unknown;
+  valeursAvant?: unknown;
+  valeursApres?: unknown;
+  adresseIp: string | null;
+  creeLe: string;
+}
+
+export interface ReponseJournalAudit {
+  items: EntreeJournalAudit[];
+  pagination: { page: number; limite: number; total: number; pages: number };
+}
+
 export type StockCategory = 
   | "Laptops & Portables"
   | "Postes Fixes & Écrans"

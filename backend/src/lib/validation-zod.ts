@@ -29,3 +29,30 @@ export const schemaChangementMotDePasse = z.object({
   motDePasseActuel: z.string().min(1, "Le mot de passe actuel est obligatoire.").max(200),
   nouveauMotDePasse: schemaNouveauMotDePasse
 });
+
+// ── H4 (Phase 1) — filtres de consultation du journal d'audit ─────────
+// Requête GET : tout arrive en chaîne ; les nombres sont convertis ici.
+// Limite serveur plafonnée à 200 lignes : le journal est volumineux par
+// nature et ne se télécharge JAMAIS en entier (H2 traitera le curseur).
+export const schemaFiltresJournalAudit = z.object({
+  action: z.string().trim().max(60).optional(),
+  utilisateurId: z.string().trim().max(64).optional(),
+  identifiant: z.string().trim().max(190).optional(),
+  entite: z.string().trim().max(60).optional(),
+  entiteId: z.string().trim().max(64).optional(),
+  dateDebut: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "La date de début doit être au format AAAA-MM-JJ.")
+    .optional(),
+  dateFin: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "La date de fin doit être au format AAAA-MM-JJ.")
+    .optional(),
+  page: z.coerce.number().int().min(1, "Le numéro de page doit être au moins 1.").default(1),
+  limite: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(200, "La limite ne peut pas dépasser 200 entrées par page.")
+    .default(50)
+});

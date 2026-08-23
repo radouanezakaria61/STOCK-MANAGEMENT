@@ -36,6 +36,8 @@ import { chargerSession, exigerAuth, exigerPermission, verifierOrigine } from ".
 import { avecIdempotence } from "../middleware/idempotence.js";
 import { acteurDepuis } from "../lib/acteur.js";
 import { listerNotifications, marquerCommeLue, marquerToutCommeLues } from "../services/notifications.service.js";
+import { listerJournal } from "../services/audit.service.js";
+import { schemaFiltresJournalAudit } from "../lib/validation-zod.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -168,6 +170,15 @@ routerApi.post("/notifications/lue-tout", h(async (req, res) => {
 }));
 routerApi.post("/notifications/:id/lue", h(async (req, res) => {
   res.json(await marquerCommeLue(req.params["id"]!, req.contexteAuth!.utilisateurId));
+}));
+
+// H4 (Phase 1) — consultation du journal d'audit : permission dédiée
+// « audit.consulter » exigée côté serveur (SUPER_ADMIN, IT_MANAGER,
+// AUDITOR). Pagination et filtres validés Zod, appliqués en SQL par le
+// service ; l'ordre est stable (creeLe desc, id desc).
+routerApi.get("/audit", exigerPermission("audit.consulter"), h(async (req, res) => {
+  const filtres = schemaFiltresJournalAudit.parse(req.query);
+  res.json({ status: "ok", data: await listerJournal(filtres) });
 }));
 
 // ── Gestionnaire d'erreurs central ────────────────────────────────────

@@ -7,6 +7,7 @@ import ITStockManagement from "./components/ITStockManagement";
 import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
 import LoginPage from "./components/LoginPage";
 import ChangePasswordModal from "./components/ChangePasswordModal";
+import JournalAuditModule from "./components/JournalAuditModule";
 import {
   LayoutDashboard,
   RefreshCw,
@@ -21,7 +22,8 @@ import {
   FileCheck2,
   Calendar,
   Building2,
-  LogOut
+  LogOut,
+  ScrollText
 } from "lucide-react";
 
 // Adapte le profil d'authentification (/api/auth/me) au format AppUser
@@ -280,7 +282,9 @@ export default function App() {
           </div>
         </div>
 
-        {/* Liens de navigation */}
+        {/* Liens de navigation — l'onglet audit n'existe que pour les
+            habilitations « audit.consulter » ; le contrôle réel reste
+            SERVEUR (403 sur GET /api/audit), cf. H4 Phase 1. */}
         <nav className="flex-1 px-3 py-4 space-y-1">
           {[
             { id: "dashboard", label: "Tableau de Bord", icon: LayoutDashboard },
@@ -288,6 +292,9 @@ export default function App() {
             { id: "assignments", label: "Affectations & Décharges", icon: FileCheck2 },
             { id: "societes", label: "Sociétés", icon: Building2 },
             { id: "users", label: "Utilisateurs & Rôles", icon: Shield },
+            ...(profil.permissions.includes("audit.consulter")
+              ? [{ id: "audit", label: "Journal d'Audit", icon: ScrollText }]
+              : []),
           ].map((tab) => {
             const IconComp = tab.icon;
             const isActive = activeTab === tab.id;
@@ -364,6 +371,7 @@ export default function App() {
                   assignments: "Affectations, Décharges & Restitutions de Matériel (DSI)",
                   societes: "Référentiel des Sociétés du Groupe",
                   users: "Gestion des Utilisateurs, Rôles & Habilitations (RBAC)",
+                  audit: "Journal d'Audit — Traçabilité & Immuabilité",
                 }[activeTab]
               }
             </h2>
@@ -600,6 +608,9 @@ export default function App() {
                     await chargerProfil();
                   }}
                 />
+              )}
+              {activeTab === "audit" && profil.permissions.includes("audit.consulter") && (
+                <JournalAuditModule permissions={profil.permissions} />
               )}
             </div>
           )}
