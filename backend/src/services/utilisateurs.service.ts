@@ -1,8 +1,14 @@
+import { Prisma } from "@prisma/client";
 import { prisma, prismaSansFiltre } from "../lib/prisma.js";
 import { conflit, introuvable, requeteInvalide } from "../lib/erreurs.js";
 import { numeroSuivant } from "../lib/ids.js";
 import { hacherMotDePasse, invaliderSessions } from "../lib/auth.js";
 import { schemaNouveauMotDePasse } from "../lib/validation-zod.js";
+import {
+  bornerPagination,
+  metaPagination,
+  type ParametresPagination
+} from "../lib/pagination.js";
 
 // Chantier 2b : la matrice de permissions codée en dur est remplacée par le
 // RBAC serveur (tables Role/Permission/RolePermission). Le rôle d'un
@@ -84,11 +90,50 @@ function verifierDernierSuperAdmin(utilisateur: { roleId: string }, action: "dé
     });
 }
 
-export async function listerUtilisateurs() {
-  return prisma.utilisateur.findMany({
-    orderBy: { creeLe: "desc" },
-    include: { societe: true, role: { select: { code: true, nom: true } } }
-  });
+// Priorité 8 — DTO par allowlist : le contrat d'un utilisateur exposé est
+// EXPLICITE. Toute colonne ajoutée demain au modèle (hash, jeton, note
+// interne…) reste invisible tant qu'elle n'est pas déclarée ici — la
+// sérialisation par blacklist (serialiser) reste en dernière barrière.
+export type UtilisateurComplet = Prisma.UtilisateurGetPayload<{
+  include: { societe: true; role: { select: { code: true; nom: true } } };
+}>;
+
+function dtoUtilisateur(u: UtilisateurComplet) {
+  return {
+    id: u.id,
+    reference: u.reference,
+    username: u.username,
+    name: u.name,
+    email: u.email,
+    phone: u.phone,
+    department: u.department,
+    jobTitle: u.jobTitle,
+    status: u.status,
+    role: u.role,
+    societeId: u.societeId,
+    societe: u.societe,
+    doitChangerMdp: u.doitChangerMdp,
+    derniereConnexion: u.derniereConnexion,
+    creeLe: u.creeLe
+  };
+}
+
+export async function listerUtilisateurs(parametres?: Partial<ParametresPagination>) {
+  // Priorité 2 : pagination serveur, ordre déterministe (creeLe desc, id desc).
+  const { page, limite, skip, take } = bornerPagination(parametres);
+  const [total, lignes] = await Promise.all([
+    prisma.utilisateur.count(),
+    prisma.utilisateur.findMany({
+      orderBy: [{ creeLe: "desc" }, { id: "desc" }],
+      include: { societe: true, role: { select: { code: true, nom: true } } },
+      skip,
+      take
+    })
+  ]);
+  return {
+    items: lignes.map(dtoUtilisateur),
+    pagination: metaPagination(page, limite, total)
+  };
 }
 
 export async function creerUtilisateur(data: EntreeUtilisateur) {

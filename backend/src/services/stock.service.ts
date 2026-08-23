@@ -11,6 +11,11 @@ import { journaliserDansTx, ACTIONS_AUDIT } from "../lib/journal-audit.js";
 import { exigerTransition, STATUTS_MATERIEL, TYPES_MOUVEMENT, type TypeMouvement } from "../lib/machine-etats.js";
 import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
 import type { ContexteActeur } from "../lib/acteur.js";
+import {
+  bornerPagination,
+  metaPagination,
+  type ParametresPagination
+} from "../lib/pagination.js";
 
 // ── Références ────────────────────────────────────────────────────────
 // Chantier 3.5 : les numéros proviennent du compteur transactionnel
@@ -50,12 +55,37 @@ async function verrouillerArticle(tx: Tx, idOuReference: string): Promise<Articl
 
 // ── Lectures ──────────────────────────────────────────────────────────
 
-export async function listerStock() {
-  const [items, movements] = await Promise.all([
-    prisma.articleStock.findMany({ orderBy: { creeLe: "desc" } }),
-    prisma.mouvementStock.findMany({ orderBy: { creeLe: "desc" } })
+export async function listerStock(parametres?: Partial<ParametresPagination>) {
+  // Priorité 2 : pagination serveur (articles). Les mouvements disposent de
+  // leur propre endpoint paginé (GET /api/mouvements) — une page d'articles
+  // ne tire plus jamais la table d'historique complète avec elle.
+  const { page, limite, skip, take } = bornerPagination(parametres);
+  // Le soft delete est appliqué automatiquement par l'extension Prisma
+  // (lib/prisma.ts) sur count() comme findMany().
+  const [total, items] = await Promise.all([
+    prisma.articleStock.count(),
+    prisma.articleStock.findMany({
+      orderBy: [{ creeLe: "desc" }, { id: "desc" }],
+      skip,
+      take
+    })
   ]);
-  return { items, movements };
+  return { items, pagination: metaPagination(page, limite, total) };
+}
+
+/** Historique des mouvements, paginé côté serveur. L'historique étant en
+ *  écriture seule, il ne fait que croître : aucune lecture « tout ». */
+export async function listerMouvements(parametres?: Partial<ParametresPagination>) {
+  const { page, limite, skip, take } = bornerPagination(parametres);
+  const [total, items] = await Promise.all([
+    prisma.mouvementStock.count(),
+    prisma.mouvementStock.findMany({
+      orderBy: [{ creeLe: "desc" }, { id: "desc" }],
+      skip,
+      take
+    })
+  ]);
+  return { items, pagination: metaPagination(page, limite, total) };
 }
 
 interface FiltresRecherche {

@@ -20,6 +20,7 @@ import {
 } from "../services/utilisateurs.service.js";
 import {
   listerStock,
+  listerMouvements,
   rechercherStock,
   creerArticle,
   modifierArticle,
@@ -38,6 +39,7 @@ import { routerAuth } from "./auth.routes.js";
 import { chargerSession, exigerAuth, exigerPermission, verifierOrigine, exigerMarqueurMutation } from "../middleware/auth.js";
 import { avecIdempotence } from "../middleware/idempotence.js";
 import { acteurDepuis } from "../lib/acteur.js";
+import { schemaPagination } from "../lib/pagination.js";
 import { listerNotifications, marquerCommeLue, marquerToutCommeLues } from "../services/notifications.service.js";
 import { listerJournal } from "../services/audit.service.js";
 import {
@@ -135,8 +137,8 @@ routerApi.post("/societes/:id/statut", exigerPermission("societes.gerer"), h(asy
   res.json(r);
 }));
 
-routerApi.get("/users", exigerPermission("utilisateurs.consulter"), h(async (_req, res) => {
-  res.json({ status: "ok", data: await listerUtilisateurs() });
+routerApi.get("/users", exigerPermission("utilisateurs.consulter"), h(async (req, res) => {
+  res.json({ status: "ok", data: await listerUtilisateurs(schemaPagination.parse(req.query)) });
 }));
 routerApi.post("/users", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
   const r = await creerUtilisateur(schemaCreationUtilisateur.parse(req.body));
@@ -157,8 +159,13 @@ routerApi.delete("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (
   res.json(await supprimerUtilisateur(req.params["id"]!));
 }));
 
-routerApi.get("/stock", exigerPermission("parc.consulter"), h(async (_req, res) => {
-  res.json({ status: "ok", data: await listerStock() });
+routerApi.get("/stock", exigerPermission("parc.consulter"), h(async (req, res) => {
+  res.json({ status: "ok", data: await listerStock(schemaPagination.parse(req.query)) });
+}));
+// Priorité 2 : l'historique des mouvements devient une ressource paginée à
+// part entière (il ne fait que croître — plus de lecture « tout » possible).
+routerApi.get("/mouvements", exigerPermission("parc.consulter"), h(async (req, res) => {
+  res.json({ status: "ok", data: await listerMouvements(schemaPagination.parse(req.query)) });
 }));
 routerApi.get("/stock/search", exigerPermission("parc.consulter"), h(async (req, res) => {
   const data = await rechercherStock({
@@ -194,8 +201,8 @@ routerApi.delete("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, r
   res.json(await supprimerArticle(req.params["id"]!, acteurDepuis(req)));
 }));
 
-routerApi.get("/assignments", exigerPermission("parc.consulter"), h(async (_req, res) => {
-  res.json({ status: "ok", data: await listerAffectations() });
+routerApi.get("/assignments", exigerPermission("parc.consulter"), h(async (req, res) => {
+  res.json({ status: "ok", data: await listerAffectations(schemaPagination.parse(req.query)) });
 }));
 // Consultation des PIN/PUK chiffrés : permission dédiée + trace d'audit
 // (chantier 3.5, P1.4). Les listes n'exposent plus jamais ces secrets.
@@ -225,7 +232,13 @@ routerApi.delete("/assignments/:id", exigerPermission("affectations.ecrire"), h(
 // siennes ; la lecture d'A n'affecte jamais B. Les alertes RESOLUES se
 // closent seules.
 routerApi.get("/notifications", h(async (req, res) => {
-  res.json({ status: "ok", data: await listerNotifications(req.contexteAuth!.utilisateurId) });
+  res.json({
+    status: "ok",
+    data: await listerNotifications(
+      req.contexteAuth!.utilisateurId,
+      schemaPagination.parse(req.query)
+    )
+  });
 }));
 routerApi.post("/notifications/lue-tout", h(async (req, res) => {
   res.json(await marquerToutCommeLues(req.contexteAuth!.utilisateurId));

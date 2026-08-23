@@ -166,27 +166,45 @@ export default function App() {
   const nombreNonLues =
     notifications.filter((n) => n.statut === "OUVERTE").length + notificationsLocales.length;
 
-  // 1. Récupération du jeu de données consolidé du parc IT.
-  // Toute réponse 401 (session expirée ou révoquée) ramène à l'écran de connexion.
-  const fetchSourcingData = async () => {
+  // Priorités 2+3 : le consolidé /api/data n'est plus consommé par
+  // l'interface — chaque domaine est chargé par SON endpoint paginé, en
+  // parallèle. Une page plafonne à 200 lignes (contrat serveur) ; au-delà,
+  // la pagination par onglet sera traitée avec H2.
+  const LIMITE_PAGE_INITIALE = 200;
+
+  const fetchSourcingData = async (permissions?: string[]) => {
     try {
-      const response = await apiFetch("/api/data");
-      if (response.status === 401) {
-        setProfil(null);
-        return;
+      const perms = permissions ?? profil?.permissions ?? [];
+      const pageInitiale = `?page=1&limite=${LIMITE_PAGE_INITIALE}`;
+
+      const [resSocietes, resStock, resMouvements, resAffectations, resUtilisateurs] =
+        await Promise.all([
+          apiFetch("/api/societes"),
+          apiFetch(`/api/stock${pageInitiale}`),
+          apiFetch(`/api/mouvements${pageInitiale}`),
+          apiFetch(`/api/assignments${pageInitiale}`),
+          perms.includes("utilisateurs.consulter")
+            ? apiFetch(`/api/users${pageInitiale}`)
+            : Promise.resolve(null)
+        ]);
+
+      // Toute réponse 401 (session expirée ou révoquée) ramène à la connexion.
+      for (const reponse of [resSocietes, resStock, resMouvements, resAffectations]) {
+        if (reponse && reponse.status === 401) {
+          setProfil(null);
+          return;
+        }
       }
-      if (response.ok) {
-        const payload = await response.json();
-        // Clés API en français (AGENTS.md « Langue des clés ») ;
-        // les noms internes du frontend sont inchangés.
-        // H1 : `utilisateurs` n'est peuplé qu'avec la permission dédiée
-        // (utilisateurs.consulter) — vide sinon, jamais absent.
-        const { societes, articles: stockItems, mouvements: stockMovements, affectations: assignments } = payload.data;
-        setSocietes(societes);
-        setUsers(payload.data.utilisateurs ?? []);
-        setStockItems(stockItems);
-        setStockMovements(stockMovements);
-        setAssignments(assignments);
+
+      // Contrat paginé { items, pagination } — clés API françaises inchangées.
+      // H1 : l'annuaire des comptes n'est interrogé qu'avec la permission
+      // dédiée (utilisateurs.consulter).
+      if (resSocietes.ok) setSocietes((await resSocietes.json()).data);
+      if (resStock?.ok) setStockItems((await resStock.json()).data.items);
+      if (resMouvements?.ok) setStockMovements((await resMouvements.json()).data.items);
+      if (resAffectations?.ok) setAssignments((await resAffectations.json()).data.items);
+      if (resUtilisateurs && resUtilisateurs.ok) {
+        setUsers((await resUtilisateurs.json()).data.items);
       }
     } catch (err) {
       console.error("Erreur lors de la récupération des données:", err);
@@ -195,20 +213,22 @@ export default function App() {
     }
   };
 
-  // Interroge le serveur sur l'identité de la session courante.
-  const chargerProfil = async (): Promise<boolean> => {
+  // Interroge le serveur sur l'identité de la session courante ; renvoie le
+  // profil frais pour éviter toute lecture d'état périmé juste après login.
+  const chargerProfil = async (): Promise<ProfilUtilisateur | null> => {
     try {
       const res = await apiFetch("/api/auth/me");
       if (!res.ok) {
         setProfil(null);
-        return false;
+        return null;
       }
       const payload = await res.json();
-      setProfil(payload.data as ProfilUtilisateur);
-      return true;
+      const profilFrais = payload.data as ProfilUtilisateur;
+      setProfil(profilFrais);
+      return profilFrais;
     } catch {
       setProfil(null);
-      return false;
+      return null;
     } finally {
       setAuthVerifiee(true);
     }
@@ -216,8 +236,8 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const connecte = await chargerProfil();
-      if (connecte) await fetchSourcingData();
+      const profilFrais = await chargerProfil();
+      if (profilFrais) await fetchSourcingData(profilFrais.permissions);
       else setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,7 +246,7 @@ export default function App() {
   const handleConnexion = async (nouveauProfil: ProfilUtilisateur) => {
     setProfil(nouveauProfil);
     setLoading(true);
-    await fetchSourcingData();
+    await fetchSourcingData(nouveauProfil.permissions);
     addNotification(
       "Connexion établie",
       `Bienvenue ${nouveauProfil.name} — rôle ${nouveauProfil.role.nom}.`,

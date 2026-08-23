@@ -96,10 +96,11 @@ export default function JournalAuditModule({ permissions }: { permissions: strin
   useEffect(() => {
     if (!peutListerUtilisateurs) return;
     let vivant = true;
-    apiFetch("/api/users")
+    apiFetch("/api/users?page=1&limite=200")
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => {
-        if (vivant && p?.data) setUtilisateurs(p.data);
+        // Contrat paginé { items, pagination } (priorité 2).
+        if (vivant && p?.data?.items) setUtilisateurs(p.data.items);
       })
       .catch(() => undefined);
     return () => {

@@ -24,6 +24,11 @@ import {
 import { chiffrer, dechiffrer } from "../lib/chiffrement.js";
 import { notifier, verifierSeuilStock, TYPES_NOTIFICATION } from "../lib/notifications.js";
 import type { ContexteActeur } from "../lib/acteur.js";
+import {
+  bornerPagination,
+  metaPagination,
+  type ParametresPagination
+} from "../lib/pagination.js";
 
 // ── Lectures ──────────────────────────────────────────────────────────
 
@@ -38,12 +43,23 @@ function masquerSecrets<T>(fiche: T): T {
   return copie as T;
 }
 
-export async function listerAffectations() {
-  const fiches = await prisma.affectation.findMany({
-    orderBy: { creeLe: "desc" },
-    include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
-  });
-  return fiches.map(masquerSecrets);
+export async function listerAffectations(parametres?: Partial<ParametresPagination>) {
+  // Priorité 2 : pagination serveur, ordre déterministe. Les secrets
+  // (PIN/PUK SIM) restent masqués par ligne via masquerSecrets.
+  const { page, limite, skip, take } = bornerPagination(parametres);
+  const [total, fiches] = await Promise.all([
+    prisma.affectation.count(),
+    prisma.affectation.findMany({
+      orderBy: [{ creeLe: "desc" }, { id: "desc" }],
+      include: { items: { orderBy: { id: "asc" } }, returnRecord: true },
+      skip,
+      take
+    })
+  ]);
+  return {
+    items: fiches.map(masquerSecrets),
+    pagination: metaPagination(page, limite, total)
+  };
 }
 
 // ── Création d'une affectation (atomique) ─────────────────────────────

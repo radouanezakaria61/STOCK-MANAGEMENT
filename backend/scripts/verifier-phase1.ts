@@ -391,8 +391,9 @@ async function main() {
     );
 
     // Statut utilisateur : liste fermée (« Supprimé » n'est pas un statut).
+    // Priorité 2 : GET /api/users est paginé ({ items, pagination }).
     const dataUsers = await admin.json("/api/users");
-    const idUserCible: string | undefined = dataUsers.corps?.data?.find(
+    const idUserCible: string | undefined = dataUsers.corps?.data?.items?.find(
       (u: any) => u.username !== "zakaria.radouane"
     )?.id;
     const statutFarfelu = await admin.json(`/api/users/${idUserCible}/status`, {
