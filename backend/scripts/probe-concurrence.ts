@@ -73,7 +73,7 @@ async function main() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       name: `${marque} portable unique`,
-      category: "Matériel Informatique",
+      category: "Laptops & Portables",
       brand: "Test",
       model: "CC-20",
       serialNumber: `${marque}-SN`,

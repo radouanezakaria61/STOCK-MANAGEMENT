@@ -339,7 +339,13 @@ async function main() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ nom: "", codeCourt: "" })
   });
-  verif("admin POST société vide → 400 français", societeVide.status === 400 && typeof societeVide.corps.error === "string");
+  // M6 (Phase 1) : la validation Zod à la frontière intercepte désormais les
+  // champs vides AVANT le service → 422 (validation), message français.
+  verif(
+    "admin POST société vide → 422 validation français",
+    societeVide.status === 422 && typeof societeVide.corps.error === "string",
+    `${societeVide.status} ${JSON.stringify(societeVide.corps)}`
+  );
 
   // ══════════ E. CYCLE DE VIE COMPLET D'UN COMPTE ══════════
   console.log("\n── E. Création → changement mdp → suppression ──");
@@ -537,15 +543,48 @@ async function main() {
 
   // ══════════ J. MACHINE À ÉTATS & INVARIANTS QUANTITÉS ══════════
   console.log("\n── J. Machine à états et invariants ──");
+  // M6 (Phase 1) : « Supprimé » n'est plus saisissable du tout via HTTP —
+  // la liste fermée Zod le refuse en 422 AVANT la machine à états (le soft
+  // delete applicatif reste le seul chemin vers ce statut, règle 6).
   const transitionInterdite = await admin.json(`/api/stock/${idSousSeuil}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ status: "Supprimé" })
   });
   verif(
-    "« En Stock » → « Supprimé » hors machine à états → 409 INVALID_STATUS_TRANSITION",
-    transitionInterdite.status === 409 && transitionInterdite.corps.code === "INVALID_STATUS_TRANSITION",
+    "statut « Supprimé » saisi → 422 (liste fermée M6)",
+    transitionInterdite.status === 422 && typeof transitionInterdite.corps.error === "string",
     `${transitionInterdite.status} ${JSON.stringify(transitionInterdite.corps)}`
+  );
+
+  // La protection métier de la machine à états reste couverte via un état
+  // TERMINAL : « Rebut / Fin de vie » n'a aucune sortie autorisée.
+  const articleReforme = await admin.json("/api/stock", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `${marqueCh3} article réformé`,
+      category: "Consommables & Pièces",
+      brand: "Test",
+      model: "CH3-RF",
+      serialNumber: `${marqueCh3}-SN6`,
+      quantity: 1,
+      minThreshold: 0,
+      unitPriceMAD: 5,
+      status: "Rebut / Fin de vie",
+      performedBy: "Vérificateur Chantier 3"
+    })
+  });
+  const idReforme: string | undefined = articleReforme.corps?.data?.id;
+  const retourDepuisReforme = await admin.json(`/api/stock/${idReforme}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "En Stock" })
+  });
+  verif(
+    "« Rebut » → « En Stock » (état terminal) → 409 INVALID_STATUS_TRANSITION",
+    retourDepuisReforme.status === 409 && retourDepuisReforme.corps.code === "INVALID_STATUS_TRANSITION",
+    `${retourDepuisReforme.status} ${JSON.stringify(retourDepuisReforme.corps)}`
   );
 
   const articlePlancher = await admin.json("/api/stock", {

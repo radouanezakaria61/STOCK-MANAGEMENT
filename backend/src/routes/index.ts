@@ -37,7 +37,20 @@ import { avecIdempotence } from "../middleware/idempotence.js";
 import { acteurDepuis } from "../lib/acteur.js";
 import { listerNotifications, marquerCommeLue, marquerToutCommeLues } from "../services/notifications.service.js";
 import { listerJournal } from "../services/audit.service.js";
-import { schemaFiltresJournalAudit } from "../lib/validation-zod.js";
+import {
+  schemaFiltresJournalAudit,
+  schemaCreationArticle,
+  schemaModificationArticle,
+  schemaMouvementStock,
+  schemaCreationAffectation,
+  schemaRetourAffectation,
+  schemaCreationSociete,
+  schemaModificationSociete,
+  schemaActivationSociete,
+  schemaCreationUtilisateur,
+  schemaModificationUtilisateur,
+  schemaChangementStatutUtilisateur
+} from "../lib/validation-zod.js";
 
 // Enveloppe async : transmet les ErreurMetier au gestionnaire central.
 const h =
@@ -76,15 +89,18 @@ routerApi.get("/societes", exigerPermission("parc.consulter"), h(async (_req, re
   res.json({ status: "ok", data: await listerSocietes() });
 }));
 routerApi.post("/societes", exigerPermission("societes.gerer"), h(async (req, res) => {
-  const r = await creerSociete(req.body);
+  const r = await creerSociete(schemaCreationSociete.parse(req.body));
   res.status(201).json(r);
 }));
 routerApi.put("/societes/:id", exigerPermission("societes.gerer"), h(async (req, res) => {
-  const r = await modifierSociete(req.params["id"]!, req.body);
+  const r = await modifierSociete(req.params["id"]!, schemaModificationSociete.parse(req.body));
   res.json(r);
 }));
 routerApi.post("/societes/:id/statut", exigerPermission("societes.gerer"), h(async (req, res) => {
-  const r = await changerActivationSociete(req.params["id"]!, req.body["actif"] === true);
+  const r = await changerActivationSociete(
+    req.params["id"]!,
+    schemaActivationSociete.parse(req.body).actif
+  );
   res.json(r);
 }));
 
@@ -92,15 +108,18 @@ routerApi.get("/users", exigerPermission("utilisateurs.consulter"), h(async (_re
   res.json({ status: "ok", data: await listerUtilisateurs() });
 }));
 routerApi.post("/users", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
-  const r = await creerUtilisateur(req.body);
+  const r = await creerUtilisateur(schemaCreationUtilisateur.parse(req.body));
   res.status(201).json(r);
 }));
 routerApi.put("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
-  const r = await modifierUtilisateur(req.params["id"]!, req.body);
+  const r = await modifierUtilisateur(req.params["id"]!, schemaModificationUtilisateur.parse(req.body));
   res.json(r);
 }));
 routerApi.post("/users/:id/status", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
-  const r = await changerStatutUtilisateur(req.params["id"]!, req.body["status"]);
+  const r = await changerStatutUtilisateur(
+    req.params["id"]!,
+    schemaChangementStatutUtilisateur.parse(req.body).status
+  );
   res.json(r);
 }));
 routerApi.delete("/users/:id", exigerPermission("utilisateurs.gerer"), h(async (req, res) => {
@@ -121,15 +140,23 @@ routerApi.get("/stock/search", exigerPermission("parc.consulter"), h(async (req,
 // Mutations créatrices de stock : enveloppe d'idempotence (en-tête
 // `X-Cle-Idempotence` optionnel du client) + contexte acteur pour l'audit.
 routerApi.post("/stock", exigerPermission("stock.ecrire"), avecIdempotence(async (req, res) => {
-  const r = await creerArticle(req.body, acteurDepuis(req));
+  const r = await creerArticle(schemaCreationArticle.parse(req.body), acteurDepuis(req));
   res.status(201).json(r);
 }));
 routerApi.put("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  const r = await modifierArticle(req.params["id"]!, req.body, acteurDepuis(req));
+  const r = await modifierArticle(
+    req.params["id"]!,
+    schemaModificationArticle.parse(req.body),
+    acteurDepuis(req)
+  );
   res.json(r);
 }));
 routerApi.post("/stock/:id/movement", exigerPermission("stock.ecrire"), h(async (req, res) => {
-  const r = await enregistrerMouvement(req.params["id"]!, req.body, acteurDepuis(req));
+  const r = await enregistrerMouvement(
+    req.params["id"]!,
+    schemaMouvementStock.parse(req.body),
+    acteurDepuis(req)
+  );
   res.json(r);
 }));
 routerApi.delete("/stock/:id", exigerPermission("stock.ecrire"), h(async (req, res) => {
@@ -145,11 +172,15 @@ routerApi.get("/assignments/:id/confidentiels", exigerPermission("affectations.c
   res.json({ status: "ok", data: await revelerCodesConfidentiels(req.params["id"]!, acteurDepuis(req)) });
 }));
 routerApi.post("/assignments", exigerPermission("affectations.ecrire"), avecIdempotence(async (req, res) => {
-  const r = await creerAffectation(req.body, acteurDepuis(req));
+  const r = await creerAffectation(schemaCreationAffectation.parse(req.body), acteurDepuis(req));
   res.status(201).json(r);
 }));
 routerApi.post("/assignments/:id/return", exigerPermission("affectations.ecrire"), h(async (req, res) => {
-  const r = await restituerAffectation(req.params["id"]!, req.body, acteurDepuis(req));
+  const r = await restituerAffectation(
+    req.params["id"]!,
+    schemaRetourAffectation.parse(req.body),
+    acteurDepuis(req)
+  );
   res.json(r);
 }));
 // Annulation d'une fiche active (remet les quantités en stock). L'historique

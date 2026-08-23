@@ -217,6 +217,214 @@ async function main() {
     verif("H4-18 date mal formée → 422", rDateBruite.status === 422, `status=${rDateBruite.status}`);
   }
 
+  // ══════════ M6 — VALIDATION ZOD SYSTÉMATIQUE ══════════
+  console.log("\n── M6. Validation Zod des endpoints mutateurs ──");
+  {
+    // Injection de masse : un champ inconnu sur un payload strict → 422.
+    const injectionStock = await admin.json("/api/stock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Article injection",
+        category: "Consommables & Pièces",
+        champFantomique: "escalade",
+        performedBy: "Vérificateur M6"
+      })
+    });
+    verif(
+      "M6-1 champ inconnu POST /stock (strict) → 422",
+      injectionStock.status === 422,
+      `${injectionStock.status} ${JSON.stringify(injectionStock.corps)}`
+    );
+
+    const qteNegative = await admin.json("/api/stock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Quantité négative",
+        category: "Consommables & Pièces",
+        quantity: -3,
+        performedBy: "Vérificateur M6"
+      })
+    });
+    verif("M6-2 quantité négative → 422", qteNegative.status === 422, `${qteNegative.status}`);
+
+    const categorieInconnue = await admin.json("/api/stock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Catégorie farfelue", category: "Nourriture", performedBy: "M6" })
+    });
+    verif(
+      "M6-3 catégorie hors référentiel → 422",
+      categorieInconnue.status === 422,
+      `${categorieInconnue.status}`
+    );
+
+    // Création VALIDE toujours acceptée — y compris le prix au format
+    // français historique « 1 250,50 MAD » (même grammaire que le service).
+    const marque = `m6-${Date.now().toString(36)}`;
+    const creationValide = await admin.json("/api/stock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: `${marque} article conforme`,
+        category: "Périphériques & Accessoires",
+        brand: "Test",
+        serialNumber: `${marque}-SN`,
+        quantity: 2,
+        minThreshold: 1,
+        unitPriceMAD: "1 250,50 MAD",
+        performedBy: "Vérificateur M6"
+      })
+    });
+    const idValide: string | undefined = creationValide.corps?.data?.id;
+    verif(
+      "M6-4 création valide → 201, prix format français = 1250.5",
+      creationValide.status === 201 &&
+        Number(creationValide.corps?.data?.unitPriceMAD) === 1250.5 &&
+        !!idValide,
+      `${creationValide.status} ${JSON.stringify(creationValide.corps).slice(0, 160)}`
+    );
+    if (idValide) await admin.json(`/api/stock/${idValide}`, { method: "DELETE" });
+
+    // Mouvements : les types produits par les flux métier restent interdits
+    // à la saisie manuelle, et tout type inconnu est refusé.
+    if (idValide) {
+      const mvInterdit = await admin.json(`/api/stock/${idValide}/movement`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "Envoi Maintenance", quantity: 1 })
+      });
+      verif("M6-5 mouvement « Envoi Maintenance » saisi → 422", mvInterdit.status === 422, `${mvInterdit.status}`);
+    }
+    const articleNeuf = await admin.json("/api/stock", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: `${marque} cible mouvements`,
+        category: "Consommables & Pièces",
+        quantity: 3,
+        performedBy: "Vérificateur M6"
+      })
+    });
+    const idNeuf: string | undefined = articleNeuf.corps?.data?.id;
+    if (idNeuf) {
+      const mvInconnu = await admin.json(`/api/stock/${idNeuf}/movement`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "Téléportation", quantity: 1 })
+      });
+      verif("M6-6 mouvement type inconnu → 422", mvInconnu.status === 422, `${mvInconnu.status}`);
+      await admin.json(`/api/stock/${idNeuf}`, { method: "DELETE" });
+    }
+
+    // Utilisateurs : strict sur la forme, le rôle reste résolu en base.
+    const userFantome = await admin.json("/api/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "m6.fantome",
+        motDePasseTemporaire: "Mot-De-Passe-M6",
+        name: "Fantôme",
+        email: "fantome@m6.ma",
+        department: "DSI",
+        role: "EMPLOYEE",
+        isAdmin: true
+      })
+    });
+    verif(
+      "M6-7 champ inconnu POST /users (strict) → 422",
+      userFantome.status === 422,
+      `${userFantome.status}`
+    );
+    const roleInconnu = await admin.json("/api/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "m6.role",
+        motDePasseTemporaire: "Mot-De-Passe-M6",
+        name: "Rôle Inconnu",
+        email: "role@m6.ma",
+        department: "DSI",
+        role: "Pirate"
+      })
+    });
+    verif(
+      "M6-8 rôle inconnu → 400 service listant les rôles",
+      roleInconnu.status === 400 && String(roleInconnu.corps.error).includes("EMPLOYEE"),
+      `${roleInconnu.status}`
+    );
+
+    // Sociétés : strict + booléen réel pour l'activation.
+    const societeFantome = await admin.json("/api/societes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nom: "Fantôme SARL", codeCourt: "FTM", actif: true })
+    });
+    verif(
+      "M6-9 champ inconnu POST /societes (strict) → 422",
+      societeFantome.status === 422,
+      `${societeFantome.status}`
+    );
+    const dataSoc = await admin.json("/api/societes");
+    const idSoc: string | undefined = dataSoc.corps?.data?.[0]?.id;
+    const activationBranquee = await admin.json(`/api/societes/${idSoc}/statut`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ actif: "oui" })
+    });
+    verif(
+      "M6-10 activation société avec actif non booléen → 422",
+      activationBranquee.status === 422,
+      `${activationBranquee.status}`
+    );
+
+    // Statut utilisateur : liste fermée (« Supprimé » n'est pas un statut).
+    const dataUsers = await admin.json("/api/users");
+    const idUserCible: string | undefined = dataUsers.corps?.data?.find(
+      (u: any) => u.username !== "zakaria.radouane"
+    )?.id;
+    const statutFarfelu = await admin.json(`/api/users/${idUserCible}/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "Supprimé" })
+    });
+    verif(
+      "M6-11 statut utilisateur hors liste → 422",
+      statutFarfelu.status === 422,
+      `${statutFarfelu.status}`
+    );
+
+    // Fiche d'affectation (formulaire hérité, mode strip) : les champs
+    // d'affichage historiques sont TOLÉRÉS mais retirés avant le service ;
+    // la restitution se déroule normalement.
+    const dataParc = await admin.json("/api/data");
+    const ficheActive = (dataParc.corps?.data?.affectations ?? []).find(
+      (f: any) => f.status === "Active"
+    );
+    if (ficheActive) {
+      const retourStrip = await admin.json(`/api/assignments/${ficheActive.id}/return`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          cause: "Autre motif",
+          equipmentCondition: "Bon état",
+          actionTaken: "Remise en stock disponible",
+          inspectedBy: "Vérificateur M6",
+          hasKeyboard: true,
+          equipmentType: "Champ hérité jamais consommé"
+        })
+      });
+      verif(
+        "M6-12 restitution avec champs hérités (strip) → acceptée 200",
+        retourStrip.status === 200,
+        `${retourStrip.status} ${JSON.stringify(retourStrip.corps).slice(0, 160)}`
+      );
+    } else {
+      verif("M6-12 restitution avec champs hérités (strip)", false, "aucune fiche Active seedée");
+    }
+  }
+
   // ══════════ BILAN ══════════
   console.log("");
   if (echecs > 0) {
