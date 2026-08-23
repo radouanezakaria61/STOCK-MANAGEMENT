@@ -70,6 +70,31 @@ export const routerApi = Router();
 // routes d'auth gèrent elles-mêmes leur exigence de session.
 routerApi.use("/auth", routerAuth);
 
+// Sonde de santé (chantier 3.5, point 22) : SEULE route publique de l'API
+// avec le login. Légère (une requête SELECT 1), sans aucun secret ni donnée
+// métier : exploitable par un superviseur local ou un reverse proxy pour
+// vérifier que le process et PostgreSQL répondent. Montée AVANT la session
+// pour ne pas dépendre d'une table/cookie en cas d'incident de base.
+routerApi.get("/health", h(async (_req, res) => {
+  let base = "ok";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch {
+    base = "ko";
+  }
+  const etat = {
+    serveur: "ok" as const,
+    base,
+    uptimeSecondes: Math.round(process.uptime()),
+    horodatage: new Date().toISOString()
+  };
+  if (base === "ko") {
+    res.status(503).json({ status: "ko", data: etat });
+    return;
+  }
+  res.json({ status: "ok", data: etat });
+}));
+
 // Tout le reste exige une session valide (chantier 2b) : plus aucun
 // endpoint anonyme.
 routerApi.use(chargerSession);

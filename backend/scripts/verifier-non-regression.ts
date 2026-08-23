@@ -156,6 +156,14 @@ async function main() {
     verif(`${methode} ${chemin} sans session → 401`, res.status === 401, `status=${res.status}`);
   }
 
+  // Sonde de santé (chantier 3.5, point 22) : l'unique exception anonyme.
+  const sante = await anon.json("/api/health");
+  verif(
+    "GET /api/health sans session → 200, serveur et base ok",
+    sante.status === 200 && sante.corps?.data?.serveur === "ok" && sante.corps?.data?.base === "ok",
+    `status=${sante.status} ${JSON.stringify(sante.corps).slice(0, 120)}`
+  );
+
   // ══════════ B. CONNEXION : messages génériques, cas d'usage réels ══════════
   console.log("\n── B. Connexion ──");
   const echecInconnu = await anon.connexion("inconnu.nobody", "Peu importe-123");
