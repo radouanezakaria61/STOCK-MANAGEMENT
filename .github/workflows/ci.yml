@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CI — qualité et non-régression (priorité 4 du plan de corrections restantes)
+#
+# NOTE : ce workflow est PRÉPARÉ mais INACTIF tant qu'aucun dépôt distant GitHub
+# n'est connecté au projet (le dépôt local n'a pas de remote ; aucun push n'est
+# effectué depuis cet environnement). Il s'activera automatiquement au premier
+# push / pull request une fois le remote ajouté :
+#   git remote add origin <url> && git push -u origin convergence-parc-it
+#
+# Contenu : installation propre (npm ci), typecheck backend/frontend, ESLint,
+# migrations Prisma sur un PostgreSQL 16 jetable, suite Vitest complète,
+# builds de production backend + frontend.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  qualite:
+    name: Qualité & non-régression
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: parc_it_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Base jetable de CI — jamais celle d'un environnement réel.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/parc_it_ci?schema=public
+
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installation des dépendances backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Installation des dépendances frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Génération du client Prisma
+        working-directory: backend
+        run: npx prisma generate
+
+      - name: Validation du schéma Prisma
+        working-directory: backend
+        run: npx prisma validate
+
+      - name: Application des migrations sur la base de CI
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      # Les tests de chiffrement (PIN/PUK au repos) ont besoin d'une clé
+      # AES-256-GCM : on en génère une éphémère, propre à chaque exécution.
+      - name: Clé de chiffrement éphémère pour la CI
+        run: 'echo "CLE_CHIFFREMENT=$(node -e "console.log(require(''crypto'').randomBytes(32).toString(''base64''))")" >> "$GITHUB_ENV"'
+
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Lint backend
+        working-directory: backend
+        run: npm run lint
+
+      - name: Tests Vitest (backend)
+        working-directory: backend
+        run: npm test
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Typecheck frontend
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
