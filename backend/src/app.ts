@@ -14,10 +14,49 @@ const app = express();
 const sautsProxy = Number(process.env.TRUST_PROXY ?? "");
 app.set("trust proxy", Number.isInteger(sautsProxy) && sautsProxy >= 0 ? sautsProxy : false);
 
-// En-têtes HTTP de sécurité de base. CSP laissée ouverte : le SPA Vite est
-// servi par ce backend en production ; un durcissement CSP viendra avec le
-// chantier « durcissement » (phase 41+).
-app.use(helmet({ contentSecurityPolicy: false }));
+// En-têtes HTTP de sécurité de base.
+// H5 (Phase 1) : la CSP est ACTIVE et adaptée aux besoins réels du SPA
+// (inventaire effectué : aucun CDN, aucune police externe, logo SVG inline
+// en data: pour les PDF, API strictement même origine) :
+//   - script-src 'self' strict : le build Vite n'émet AUCUN script inline
+//     (vérifié sur frontend/dist/index.html), pas de eval ajouté ;
+//   - style-src : 'unsafe-inline' limité AUX STYLES uniquement et documenté :
+//     React pose des attributs style via CSSOM et certains chemins
+//     d'injection de feuilles runtime (Tailwind/HMR) l'exigent ; une CSP
+//     sans 'unsafe-inline' sur style-src casserait l'affichage au premier
+//     écart, alors que les styles ne peuvent pas exécuter de script
+//     (script-src reste strict — le vecteur dangereux est fermé) ;
+//   - img-src data: : le logo Distra (utils/distraLogo.ts) est un SVG
+//     encodé data: consommé par jsPDF côté client.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        // Pas de 'unsafe-eval', jamais ; 'unsafe-inline' ci-dessus justifié.
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+        // Explicitement DÉSACTIVÉ (présent dans les defaults Helmet) :
+        // l'app doit rester pleinement fonctionnelle sur un LAN servi en
+        // HTTP simple ; la montée automatique vers https:// casserait les
+        // requêtes mêmes origines. Le passage TLS se pilote au reverse
+        // proxy — cf. M4 / docs/DEPLOIEMENT.md.
+        upgradeInsecureRequests: null as unknown as string[]
+      }
+    },
+    // HSTS : émis par Helmet par défaut ; ignoré par les navigateurs tant
+    // que le site n'est pas servi en HTTPS — voir docs/DEPLOIEMENT.md (M4).
+    crossOriginEmbedderPolicy: false
+  })
+);
 
 // Limite de corps : aucune route métier n'a besoin d'un payload massif.
 app.use(express.json({ limit: "100kb" }));
