@@ -234,9 +234,22 @@ model Compteur {
 model TentativeConnexion {
   cle            String    @id // ip|identifiant
   echecs         Int       @default(0)
-  bloqueJusqua   DateTime? @map("bloque_jusqua")
-  fenetreOuverte DateTime  @default(now()) @map("fenetre_ouverte")
+  bloqueJusqua   DateTime? @db.Timestamptz(3) @map("bloque_jusqua")
+  fenetreOuverte DateTime  @db.Timestamptz(3) @default(now()) @map("fenetre_ouverte")
   @@map("tentatives_connexion")
+}
+
+// Limitation complémentaire PAR ADRESSE IP (M2, Phase 1) : complète le
+// limiteur ci-dessus contre les pulvérisations qui changent d'identifiant à
+// chaque essai. Même famille de politique : N échecs dans une fenêtre glissante
+// puis temporisation ; état persistant, décision atomique en base. Le succès
+// NE réinitialise PAS ce compteur (anti-spray) — il expire avec sa fenêtre.
+model LimitationIp {
+  cle            String    @id // adresse IP telle que vue par le serveur
+  echecs         Int       @default(0)
+  bloqueJusqua   DateTime? @db.Timestamptz(3) @map("bloque_jusqua")
+  fenetreOuverte DateTime  @db.Timestamptz(3) @default(now()) @map("fenetre_ouverte")
+  @@map("limitation_ip")
 }
 
 // Idempotence serveur (chantier 3) : le client envoie `X-Cle-Idempotence` ;

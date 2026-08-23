@@ -600,6 +600,104 @@ async function main() {
     await lectureSansMarqueur.text();
   }
 
+  // ══════════ M2 — LIMITATION PAR ADRESSE IP ══════════
+  // ⚠ Section placée EN DERNIER : elle bloque volontairement l'adresse
+  // locale pendant quelques requêtes, puis NETTOIE sa ligne en base. Les
+  // identifiants pulvérisés sont uniques par exécution pour ne jamais
+  // interagir avec le limiteur C2 (ip|identifiant).
+  console.log("\n── M2. Limitation des connexions par adresse IP ──");
+  {
+    const marque = `spray-${Date.now().toString(36)}`;
+    const posterEchec = async (identifiant: string, ipUsurpee?: string): Promise<Response> => {
+      const entetes: Record<string, string> = {
+        "content-type": "application/json",
+        "x-requested-with": "XMLHttpRequest"
+      };
+      if (ipUsurpee) entetes["x-forwarded-for"] = ipUsurpee;
+      return fetch(`${BASE}/api/auth/login`, {
+        method: "POST",
+        headers: entetes,
+        body: JSON.stringify({ identifiant, motDePasse: "Pas-Le-Bon-Mot-De-Passe-1" })
+      });
+    };
+
+    // Pulvérisation : 30 identifiants DIFFÉRENTS depuis la même adresse — le
+    // limiteur C2 (par couple) ne doit JAMAIS se déclencher ici.
+    let statut29 = 0;
+    for (let i = 1; i <= 29; i++) {
+      const r = await posterEchec(`${marque}.${i}@m2.test`);
+      statut29 = r.status;
+      await r.text();
+      if (r.status === 429) break; // ne doit pas arriver avant la 30ᵉ écriture
+    }
+    verif(
+      "M2-1 les 29 premiers essais → 401 (pas de blocage prématuré)",
+      statut29 === 401,
+      `dernier status=${statut29}`
+    );
+
+    const trentieme = await posterEchec(`${marque}.30@m2.test`);
+    await trentieme.text();
+    verif(
+      "M2-2 le 30ᵉ échec franchit le seuil (réponse encore 401)",
+      trentieme.status === 401,
+      `status=${trentieme.status}`
+    );
+
+    const bloquee = await posterEchec(`${marque}.31@m2.test`);
+    const retryApres = bloquee.headers.get("retry-after");
+    await bloquee.text();
+    verif(
+      "M2-3 au-delà de 30 échecs/IP → 429 + Retry-After",
+      bloquee.status === 429 && Number(retryApres) > 0,
+      `status=${bloquee.status} retry-after=${retryApres}`
+    );
+
+    // Tentative d'usurpation d'adresse : TRUST_PROXY absent ⇒ XFF ignoré,
+    // la requête reste rattachée à l'adresse réelle (toujours bloquée).
+    const usurpation = await posterEchec(`${marque}.32@m2.test`, "8.8.8.8");
+    await usurpation.text();
+    verif(
+      "M2-4 X-Forwarded-For usurpé ignoré (blocage maintenu)",
+      usurpation.status === 429,
+      `status=${usurpation.status}`
+    );
+
+    // Le succès ne réinitialise PAS le compteur IP : une connexion valide
+    // pendant le blocage est impossible (429 AVANT toute authentification).
+    const succesPendantBlocage = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+      body: JSON.stringify({ identifiant: "zakaria.radouane", motDePasse: MDP_DEMO })
+    });
+    await succesPendantBlocage.text();
+    verif(
+      "M2-5 connexion légitime refusée tant que l'IP est bloquée",
+      succesPendantBlocage.status === 429,
+      `status=${succesPendantBlocage.status}`
+    );
+
+    // Nettoyage OBLIGATOIRE : suppression des compteurs créés par cette
+    // section (l'adresse locale redevient immédiatement utilisable).
+    const db = new PrismaClient();
+    const lignesIp = await db.limitationIp.deleteMany({});
+    await db.tentativeConnexion.deleteMany({ where: { cle: { contains: marque } } });
+    await db.$disconnect();
+    verif("M2-6 nettoyage du compteur IP effectué", lignesIp.count >= 1, `${lignesIp.count} ligne(s)`);
+
+    const apresNettoyage = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+      body: JSON.stringify({ identifiant: "zakaria.radouane", motDePasse: MDP_DEMO })
+    });
+    await apresNettoyage.text();
+    verif(
+      "M2-7 après nettoyage : login légitime redevenu possible",
+      apresNettoyage.status === 200,
+      `status=${apresNettoyage.status}`
+    );
+  }
+
   // ══════════ BILAN ══════════
   console.log("");
   if (echecs > 0) {

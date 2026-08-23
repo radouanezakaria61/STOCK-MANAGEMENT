@@ -18,6 +18,8 @@ import {
   enregistrerEchecConnexion,
   reinitialiserConnexion,
   verifierLimiteConnexion,
+  verifierLimiteIp,
+  enregistrerEchecIp,
   verifierOrigine,
   exigerMarqueurMutation
 } from "../middleware/auth.js";
@@ -70,6 +72,22 @@ routerAuth.post(
   h(async (req, res) => {
     const { identifiant, motDePasse } = schemaConnexion.parse(req.body);
     const cleLimiteur = `${adresseIpDe(req) ?? "inconnue"}|${identifiant.trim().toLowerCase()}`;
+    // M2 (Phase 1) : clé du limiteur par adresse — TRUST_PROXY absent, les
+    // en-têtes X-Forwarded-For ne sont PAS lus (usurpation inutile) ; derrière
+    // un proxy configuré, adresseIpDe renvoie l'IP client réelle.
+    const cleIp = adresseIpDe(req) ?? "inconnue";
+
+    // Deux verrous en cascade, le plus large d'abord : une IP déjà bloquée
+    // est refusée avant même la consultation de son compteur par identifiant,
+    // et AVANT toute recherche utilisateur (pas de fuite d'existence).
+    const attenteIp = await verifierLimiteIp(cleIp);
+    if (attenteIp > 0) {
+      res.setHeader("Retry-After", String(attenteIp));
+      throw new ErreurMetier(
+        429,
+        `Trop de tentatives de connexion depuis cette adresse. Réessayez dans ${attenteIp} secondes.`
+      );
+    }
 
     const attenteSecondes = await verifierLimiteConnexion(cleLimiteur);
     if (attenteSecondes > 0) {
@@ -112,7 +130,10 @@ routerAuth.post(
       utilisateur.status === "Actif";
 
     if (!(compteUtilisable && motDePasseValide)) {
+      // Les DEUX compteurs enregistrent l'échec : par couple (IP, identifiant)
+      // et par IP seule (M2). Le blocage IP est évalué à la prochaine requête.
       await enregistrerEchecConnexion(cleLimiteur);
+      await enregistrerEchecIp(cleIp);
       await journaliserAudit(
         {
           action: "LOGIN_FAILED",
@@ -124,6 +145,9 @@ routerAuth.post(
       throw new ErreurMetier(401, MESSAGE_ECHEC_CONNEXION);
     }
 
+    // Succès : le compteur par identifiant est remis à zéro. Le compteur PAR
+    // IP ne l'est PAS volontairement (anti-spray M2) : il expire avec sa
+    // fenêtre glissante.
     await reinitialiserConnexion(cleLimiteur);
     await ouvrirSession(req, res, utilisateur.id);
     await prisma.utilisateur.update({

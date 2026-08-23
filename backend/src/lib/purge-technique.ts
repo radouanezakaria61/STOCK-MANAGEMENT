@@ -37,12 +37,13 @@ export interface BilanPurge {
   sessionsPurgees: number;
   requetesIdempotentesPurgees: number;
   tentativesConnexionPurgees: number;
+  limitationIpPurgees: number;
 }
 
 export async function purgerDonneesTechniques(): Promise<BilanPurge> {
   const maintenant = Date.now();
 
-  // Séquentiel volontaire (pas Promise.all) : trois DELETE indépendants et
+  // Séquentiel volontaire (pas Promise.all) : quatre DELETE indépendants et
   // brefs ; l'ordre stable facilite la lecture des logs de purge.
   const sessions = await prisma.session.deleteMany({
     where: { expireLe: { lt: new Date(maintenant - GRACE_SESSIONS_MS) } }
@@ -52,20 +53,32 @@ export async function purgerDonneesTechniques(): Promise<BilanPurge> {
     where: { creeLe: { lt: new Date(maintenant - RETENTION_IDEMPOTENCE_MS) } }
   });
 
+  // Politique identique pour les deux tables de compteurs du limiteur de
+  // connexion (tentatives_connexion et limitation_ip, cette dernière ajoutée
+  // au chantier M2) : fenêtre d'échecs close depuis >1 h ET blocage éventuel
+  // terminé depuis >24 h. Les compteurs vivants ou récemment actifs restent.
+  const frontiereFenetre = new Date(maintenant - FENETRE_MORTE_MS);
+  const frontiereBlocage = new Date(maintenant - FIN_BLOCAGE_CONSERVE_MS);
+
   const tentativesConnexion = await prisma.tentativeConnexion.deleteMany({
     where: {
-      fenetreOuverte: { lt: new Date(maintenant - FENETRE_MORTE_MS) },
-      OR: [
-        { bloqueJusqua: null },
-        { bloqueJusqua: { lt: new Date(maintenant - FIN_BLOCAGE_CONSERVE_MS) } }
-      ]
+      fenetreOuverte: { lt: frontiereFenetre },
+      OR: [{ bloqueJusqua: null }, { bloqueJusqua: { lt: frontiereBlocage } }]
+    }
+  });
+
+  const limitationIp = await prisma.limitationIp.deleteMany({
+    where: {
+      fenetreOuverte: { lt: frontiereFenetre },
+      OR: [{ bloqueJusqua: null }, { bloqueJusqua: { lt: frontiereBlocage } }]
     }
   });
 
   return {
     sessionsPurgees: sessions.count,
     requetesIdempotentesPurgees: requetesIdempotentes.count,
-    tentativesConnexionPurgees: tentativesConnexion.count
+    tentativesConnexionPurgees: tentativesConnexion.count,
+    limitationIpPurgees: limitationIp.count
   };
 }
 
@@ -87,7 +100,8 @@ export function demarrerPurgePlanifiee(): () => void {
       console.log(
         `[purge] données techniques : ${bilan.sessionsPurgees} session(s), ` +
           `${bilan.requetesIdempotentesPurgees} clé(s) d'idempotence, ` +
-          `${bilan.tentativesConnexionPurgees} compteur(s) de connexion.`
+          `${bilan.tentativesConnexionPurgees} compteur(s) de connexion, ` +
+          `${bilan.limitationIpPurgees} compteur(s) IP.`
       );
     } catch (erreur) {
       // La purge est un service rendu, jamais une exigence : un échec est

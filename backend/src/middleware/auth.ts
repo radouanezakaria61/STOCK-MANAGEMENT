@@ -122,6 +122,46 @@ export async function reinitialiserConnexion(cle: string): Promise<void> {
   await prisma.tentativeConnexion.deleteMany({ where: { cle } });
 }
 
+// ── Limitation complémentaire PAR ADRESSE IP (M2, Phase 1) ────────────
+// Le limiteur par couple (IP, identifiant) ne voit pas les pulvérisations
+// qui changent d'identifiant à chaque essai. Politique miroir, état en base :
+//   30 échecs en 1 h depuis la même IP → blocage de 15 min.
+// Décision ATOMIQUE (INSERT … ON CONFLICT), même mécanisme que C2 : deux
+// échecs simultanés ne peuvent pas se perdre. Le succès d'une connexion ne
+// réinitialise PAS ce compteur : une adresse qui pulvérise des identifiants
+// avant de réussir un essai reste sous surveillance jusqu'à l'expiration de
+// sa fenêtre (documenté dans le rapport M2).
+const FENETRE_IP_S = 60 * 60; // fenêtre glissante : 1 h
+const MAX_ECHECS_IP = 30; // seuil de déclenchement du blocage
+const BLOCAGE_IP_S = 15 * 60; // durée du blocage
+
+export async function verifierLimiteIp(ip: string): Promise<number> {
+  const entree = await prisma.limitationIp.findUnique({ where: { cle: ip } });
+  if (!entree?.bloqueJusqua || entree.bloqueJusqua.getTime() <= Date.now()) return 0;
+  return Math.ceil((entree.bloqueJusqua.getTime() - Date.now()) / 1000);
+}
+
+export async function enregistrerEchecIp(ip: string): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO limitation_ip (cle, echecs, bloque_jusqua, fenetre_ouverte)
+    VALUES (${ip}, 1, NULL, NOW())
+    ON CONFLICT (cle) DO UPDATE SET
+      fenetre_ouverte =
+        CASE WHEN limitation_ip.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_IP_S})
+             THEN limitation_ip.fenetre_ouverte ELSE NOW() END,
+      echecs =
+        CASE WHEN limitation_ip.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_IP_S})
+             THEN limitation_ip.echecs + 1 ELSE 1 END,
+      bloque_jusqua =
+        CASE
+          WHEN limitation_ip.fenetre_ouverte > NOW() - make_interval(secs => ${FENETRE_IP_S})
+               AND limitation_ip.echecs + 1 >= ${MAX_ECHECS_IP}
+          THEN NOW() + make_interval(secs => ${BLOCAGE_IP_S})
+          ELSE limitation_ip.bloque_jusqua
+        END
+  `;
+}
+
 // ── Anti-CSRF (M1, Phase 1) ──────────────────────────────────────────
 // Deux couches complémentaires sur toute mutation :
 //   1. exigerMarqueurMutation : l'en-tête personnalisé
