@@ -42,8 +42,6 @@ function verif(nom: string, condition: boolean, detail = "") {
 const estUuid = (v: unknown) =>
   typeof v === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-const estDateSeule = (v: unknown) =>
-  typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 interface ReponseJson<T = any> {
   status: number;

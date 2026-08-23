@@ -1,7 +1,6 @@
 import { Prisma, ArticleStock } from "@prisma/client";
 import {
   prisma,
-  prismaSansFiltre,
   verrouillerReferences,
   type Tx
 } from "../lib/prisma.js";

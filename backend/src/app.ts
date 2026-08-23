@@ -22,12 +22,20 @@ app.set("trust proxy", interpreterTrustProxy(process.env.TRUST_PROXY));
 // en data: pour les PDF, API strictement même origine) :
 //   - script-src 'self' strict : le build Vite n'émet AUCUN script inline
 //     (vérifié sur frontend/dist/index.html), pas de eval ajouté ;
-//   - style-src : 'unsafe-inline' limité AUX STYLES uniquement et documenté :
-//     React pose des attributs style via CSSOM et certains chemins
-//     d'injection de feuilles runtime (Tailwind/HMR) l'exigent ; une CSP
-//     sans 'unsafe-inline' sur style-src casserait l'affichage au premier
-//     écart, alors que les styles ne peuvent pas exécuter de script
-//     (script-src reste strict — le vecteur dangereux est fermé) ;
+//   - style-src : « 'self' 'unsafe-inline' » — analyse du chantier
+//     « corrections restantes » (P9), décision MAINTENUE, voici pourquoi :
+//     le build n'émet ni <style> ni feuille runtime (CSS extrait dans
+//     assets/*.css) ; ce qui exige 'unsafe-inline' ici, ce sont les
+//     ATTRIBUTS style="" posés par React (style={{…}} : barres de
+//     progression à largeur DYNAMIQUE, tooltips Recharts). Une CSP sans
+//     'unsafe-inline' bloque tout attribut style ; l'alternative CSP3
+//     ('unsafe-hashes' + hash de chaque valeur littérale) ne peut PAS
+//     couvrir des valeurs calculées à l'exécution. S'en passer imposerait
+//     de quantifier les indicateurs visuels en classes pré-générées —
+//     refactor visuel risqué pour un gain nul : un attribut style ne peut
+//     pas exécuter de script dans un navigateur moderne et le vecteur
+//     réel (script inline/eval) reste fermé par script-src strict.
+//     Réévaluer si les composants à style dynamique disparaissent.
 //   - img-src data: : le logo Distra (utils/distraLogo.ts) est un SVG
 //     encodé data: consommé par jsPDF côté client.
 app.use(

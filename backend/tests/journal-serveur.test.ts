@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { journaliser, middlewareRequeteId } from "../src/lib/journal-serveur.js";
-import type { Request, Response, NextFunction } from "express";
+import type { Request, Response } from "express";
 
 // Priorité 6 — chaque requête HTTP porte un identifiant unique dans les logs,
 // sans que les appelants aient à le manipuler (AsyncLocalStorage).
