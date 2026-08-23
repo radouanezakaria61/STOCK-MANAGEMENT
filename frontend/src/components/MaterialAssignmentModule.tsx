@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import React, { useState, useEffect } from "react";
 import { MaterialAssignment, ITStockItem, AppUser, ReturnCause, EquipmentReturnCondition, TelecomOperator, AssignedResourceType, OperationType, RestitutedDeviceCondition, AssignedItemDetail, MaterialReturnRecord } from "../types";
 import { exportAssignmentToPDF, exportReturnToPDF, exportDistraSimSmartphoneToPDF } from "../utils/pdfGenerator";
@@ -362,7 +363,7 @@ export default function MaterialAssignmentModule({
         payloadBody.incidentRemarks = formIncidentRemarks || formNotes;
       }
 
-      const res = await fetch("/api/assignments", {
+      const res = await apiFetch("/api/assignments", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -426,7 +427,7 @@ export default function MaterialAssignmentModule({
   const handleOuvrirImpression = async (assignment: MaterialAssignment) => {
     setSelectedAssignmentForPrint(assignment);
     try {
-      const r = await fetch(`/api/assignments/${assignment.id}/confidentiels`);
+      const r = await apiFetch(`/api/assignments/${assignment.id}/confidentiels`);
       if (r.ok) {
         const p = await r.json();
         setSelectedAssignmentForPrint({
@@ -450,7 +451,7 @@ export default function MaterialAssignmentModule({
       const allOriginalAccessories = selectedAssignmentForReturn.items.flatMap(i => i.accessories || []);
       const missing = allOriginalAccessories.filter(a => !accessoriesReturned.includes(a));
 
-      const res = await fetch(`/api/assignments/${selectedAssignmentForReturn.id}/return`, {
+      const res = await apiFetch(`/api/assignments/${selectedAssignmentForReturn.id}/return`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

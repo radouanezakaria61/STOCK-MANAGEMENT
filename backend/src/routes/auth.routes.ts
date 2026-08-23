@@ -18,7 +18,8 @@ import {
   enregistrerEchecConnexion,
   reinitialiserConnexion,
   verifierLimiteConnexion,
-  verifierOrigine
+  verifierOrigine,
+  exigerMarqueurMutation
 } from "../middleware/auth.js";
 import { schemaChangementMotDePasse, schemaConnexion } from "../lib/validation-zod.js";
 
@@ -64,6 +65,7 @@ function hacheLeurreAsync(): Promise<string> {
 
 routerAuth.post(
   "/login",
+  exigerMarqueurMutation,
   verifierOrigine,
   h(async (req, res) => {
     const { identifiant, motDePasse } = schemaConnexion.parse(req.body);
@@ -142,6 +144,7 @@ routerAuth.post(
 routerAuth.post(
   "/logout",
   chargerSession,
+  exigerMarqueurMutation,
   verifierOrigine,
   h(async (req, res) => {
     const contexte = req.contexteAuth;
@@ -171,6 +174,7 @@ routerAuth.post(
   "/changer-mot-de-passe",
   chargerSession,
   exigerAuth,
+  exigerMarqueurMutation,
   verifierOrigine,
   h(async (req, res) => {
     const contexte = req.contexteAuth!;

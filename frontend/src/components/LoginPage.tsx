@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import { useState } from "react";
 import { LogIn, ShieldCheck } from "lucide-react";
 import { ProfilUtilisateur } from "../types";
@@ -21,7 +22,7 @@ export default function LoginPage({ onConnexion }: LoginPageProps) {
     setEnCours(true);
     setErreur("");
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await apiFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifiant: identifiant.trim(), motDePasse }),

@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import React, { useState } from "react";
 import { ITStockItem, StockMovement, AppUser, StockCategory, StockStatus } from "../types";
 import {
@@ -143,7 +144,7 @@ export default function ITStockManagement({
     if (!newItemForm.name) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/stock", {
+      const res = await apiFetch("/api/stock", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -185,7 +186,7 @@ export default function ITStockManagement({
     if (!showAdjustModal) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/stock/${showAdjustModal.id}/movement`, {
+      const res = await apiFetch(`/api/stock/${showAdjustModal.id}/movement`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -221,7 +222,7 @@ export default function ITStockManagement({
   const handleDeleteItem = async (id: string, name: string) => {
     if (!confirm(`Confirmez-vous la suppression définitive de "${name}" du stock IT ?`)) return;
     try {
-      const res = await fetch(`/api/stock/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/stock/${id}`, { method: "DELETE" });
       if (res.ok) {
         onRefresh();
       }

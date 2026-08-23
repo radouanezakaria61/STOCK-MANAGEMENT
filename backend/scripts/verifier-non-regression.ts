@@ -64,6 +64,11 @@ class SessionHttp {
     const cookie = this.enteteCookie();
     if (cookie) entetes.set("cookie", cookie);
     if (origine) entetes.set("origin", origine);
+    // M1 (Phase 1) : toute mutation porte le marqueur anti-CSRF attendu.
+    const methode = (init.method ?? "GET").toUpperCase();
+    if (methode !== "GET" && methode !== "HEAD" && methode !== "OPTIONS") {
+      if (!entetes.has("x-requested-with")) entetes.set("x-requested-with", "XMLHttpRequest");
+    }
     return fetch(`${BASE}${chemin}`, { ...init, headers: entetes });
   }
 

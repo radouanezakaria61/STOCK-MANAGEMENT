@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import { useCallback, useEffect, useState } from "react";
 import {
   ChevronDown,
@@ -95,7 +96,7 @@ export default function JournalAuditModule({ permissions }: { permissions: strin
   useEffect(() => {
     if (!peutListerUtilisateurs) return;
     let vivant = true;
-    fetch("/api/users")
+    apiFetch("/api/users")
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => {
         if (vivant && p?.data) setUtilisateurs(p.data);
@@ -120,7 +121,7 @@ export default function JournalAuditModule({ permissions }: { permissions: strin
       if (f.entite) params.set("entite", f.entite);
       if (f.dateDebut) params.set("dateDebut", f.dateDebut);
       if (f.dateFin) params.set("dateFin", f.dateFin);
-      const res = await fetch(`/api/audit?${params.toString()}`);
+      const res = await apiFetch(`/api/audit?${params.toString()}`);
       if (res.status === 403) {
         setErreur("Accès refusé : la permission « audit.consulter » est requise.");
         return;

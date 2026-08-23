@@ -55,6 +55,11 @@ class SessionHttp {
     return [...this.jetons.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   }
 
+  /** Cookies courants, pour construire des requêtes brutes (tests M1). */
+  cookiePublique(): string {
+    return this.enteteCookie();
+  }
+
   async requete(chemin: string, init: RequestInit = {}): Promise<Response> {
     const entetes = entetesBase(init);
     const cookie = this.enteteCookie();
@@ -518,6 +523,81 @@ async function main() {
     verif("M3-7 API toujours opérationnelle après purge", auditApresPurge.status === 200, `${auditApresPurge.status}`);
 
     await db.$disconnect();
+  }
+
+  // ══════════ M1 — ANTI-CSRF (marqueur de mutation obligatoire) ══════════
+  console.log("\n── M1. Renforcement CSRF ──");
+  {
+    // 1. Un POST sans le marqueur (typique d'un formulaire forgé) → 403,
+    //    y compris sur le login public.
+    const loginSansMarqueur = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ identifiant: "zakaria.radouane", motDePasse: MDP_DEMO })
+    });
+    verif(
+      "M1-1 login SANS X-Requested-With → 403",
+      loginSansMarqueur.status === 403,
+      `status=${loginSansMarqueur.status}`
+    );
+    await loginSansMarqueur.text();
+
+    // 2. Le même POST AVEC le marqueur passe (client non navigateur légitime).
+    const loginAvecMarqueur = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+      body: JSON.stringify({ identifiant: "zakaria.radouane", motDePasse: MDP_DEMO })
+    });
+    verif(
+      "M1-2 login AVEC marqueur → 200",
+      loginAvecMarqueur.status === 200,
+      `status=${loginAvecMarqueur.status}`
+    );
+    await loginAvecMarqueur.text();
+
+    // 3. Mutation authentifiée sans marqueur → 403 même avec session valide.
+    const cookieAdmin = admin.cookiePublique();
+    const mutationSansMarqueur = await fetch(`${BASE}/api/stock`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: cookieAdmin
+      },
+      body: JSON.stringify({ name: "Sans marqueur", category: "Consommables & Pièces" })
+    });
+    verif(
+      "M1-3 mutation authentifiée SANS marqueur → 403",
+      mutationSansMarqueur.status === 403,
+      `status=${mutationSansMarqueur.status}`
+    );
+    await mutationSansMarqueur.text();
+
+    // 4. Origin étrangère refusée même avec marqueur (couche Origin intacte).
+    const originEtrangere = await fetch(`${BASE}/api/notifications/lue-tout`, {
+      method: "POST",
+      headers: {
+        "x-requested-with": "XMLHttpRequest",
+        origin: "https://site-pirate.exemple",
+        cookie: cookieAdmin
+      }
+    });
+    verif(
+      "M1-4 Origin étrangère + marqueur → 403",
+      originEtrangere.status === 403,
+      `status=${originEtrangere.status}`
+    );
+    await originEtrangere.text();
+
+    // 5. Les LECTURES ne sont pas affectées par l'exigence du marqueur.
+    const lectureSansMarqueur = await fetch(`${BASE}/api/data`, {
+      headers: { cookie: cookieAdmin }
+    });
+    verif(
+      "M1-5 GET sans marqueur → 200 (lectures inchangées)",
+      lectureSansMarqueur.status === 200,
+      `status=${lectureSansMarqueur.status}`
+    );
+    await lectureSansMarqueur.text();
   }
 
   // ══════════ BILAN ══════════

@@ -32,7 +32,7 @@ import {
 } from "../services/affectations.service.js";
 import { ZodError } from "zod";
 import { routerAuth } from "./auth.routes.js";
-import { chargerSession, exigerAuth, exigerPermission, verifierOrigine } from "../middleware/auth.js";
+import { chargerSession, exigerAuth, exigerPermission, verifierOrigine, exigerMarqueurMutation } from "../middleware/auth.js";
 import { avecIdempotence } from "../middleware/idempotence.js";
 import { acteurDepuis } from "../lib/acteur.js";
 import { listerNotifications, marquerCommeLue, marquerToutCommeLues } from "../services/notifications.service.js";
@@ -72,7 +72,10 @@ routerApi.use("/auth", routerAuth);
 routerApi.use(chargerSession);
 routerApi.use(exigerAuth);
 
-// Anti-CSRF léger : sur mutation, un en-tête Origin doit être autorisé.
+// Anti-CSRF (M1, Phase 1) : sur mutation, le marqueur X-Requested-With est
+// obligatoire, puis l'Origin éventuel est validé. L'ordre importe : le
+// marqueur filtre les soumissions de formulaires forgées avant toute lecture.
+routerApi.use(exigerMarqueurMutation);
 routerApi.use(verifierOrigine);
 
 // Chantier 3.5 (P1.2) : les consultations sensibles exigent une permission

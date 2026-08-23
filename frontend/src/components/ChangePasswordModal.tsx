@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import { useState } from "react";
 import { KeyRound, CheckCircle2 } from "lucide-react";
 
@@ -28,7 +29,7 @@ export default function ChangePasswordModal({ onChangeEffectue }: ChangePassword
     }
     setEnCours(true);
     try {
-      const res = await fetch("/api/auth/changer-mot-de-passe", {
+      const res = await apiFetch("/api/auth/changer-mot-de-passe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ motDePasseActuel, nouveauMotDePasse }),

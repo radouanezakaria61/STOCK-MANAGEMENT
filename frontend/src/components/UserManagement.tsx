@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import React, { useState } from "react";
 import { AppUser, Societe, UserRole } from "../types";
 import {
@@ -189,12 +190,12 @@ export default function UserManagement({
         ...(motDePasseTemporaire ? { motDePasseTemporaire } : {}),
       };
       const res = editingUser
-        ? await fetch(`/api/users/${editingUser.id}`, {
+        ? await apiFetch(`/api/users/${editingUser.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(corps),
           })
-        : await fetch("/api/users", {
+        : await apiFetch("/api/users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(corps),
@@ -218,7 +219,7 @@ export default function UserManagement({
   const handleToggleStatus = async (user: AppUser) => {
     const nextStatus = user.status === "Actif" ? "Inactif" : "Actif";
     try {
-      const res = await fetch(`/api/users/${user.id}/status`, {
+      const res = await apiFetch(`/api/users/${user.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
@@ -240,7 +241,7 @@ export default function UserManagement({
       return;
     }
     try {
-      const res = await fetch(`/api/users/${user.id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/users/${user.id}`, { method: "DELETE" });
       const result = await res.json();
       if (!res.ok) {
         alert(result.error || "Erreur lors de la suppression");

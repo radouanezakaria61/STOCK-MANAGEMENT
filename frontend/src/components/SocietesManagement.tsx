@@ -1,3 +1,4 @@
+import { apiFetch } from "../api";
 import React, { useState } from "react";
 import { Societe, AppUser } from "../types";
 import {
@@ -113,12 +114,12 @@ export default function SocietesManagement({
     setFormError("");
     try {
       const res = editingSociete
-        ? await fetch(`/api/societes/${editingSociete.id}`, {
+        ? await apiFetch(`/api/societes/${editingSociete.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(formData),
           })
-        : await fetch("/api/societes", {
+        : await apiFetch("/api/societes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(formData),
@@ -153,7 +154,7 @@ export default function SocietesManagement({
       return;
     }
     try {
-      const res = await fetch(`/api/societes/${societe.id}/statut`, {
+      const res = await apiFetch(`/api/societes/${societe.id}/statut`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actif: nextActif }),

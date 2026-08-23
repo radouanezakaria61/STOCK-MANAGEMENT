@@ -122,11 +122,38 @@ export async function reinitialiserConnexion(cle: string): Promise<void> {
   await prisma.tentativeConnexion.deleteMany({ where: { cle } });
 }
 
-// ── Anti-CSRF léger (réseau interne) ─────────────────────────────────
-// Sur une mutation, un en-tête Origin présent doit correspondre soit à une
-// origine autorisée (ORIGINES_AUTORISEES), soit à l'origine du serveur lui-
-// même (déploiement où le backend sert le SPA). Les clients non navigateurs
-// (curl, intégrations internes) n'envoient pas d'Origin et passent.
+// ── Anti-CSRF (M1, Phase 1) ──────────────────────────────────────────
+// Deux couches complémentaires sur toute mutation :
+//   1. exigerMarqueurMutation : l'en-tête personnalisé
+//      « X-Requested-With: XMLHttpRequest » est OBLIGATOIRE. Un formulaire
+//      HTML forgé cross-site ne peut pas poser d'en-tête personnalisé ni
+//      passer par fetch sur une autre origine : la requête forgée est donc
+//      refusée sans état côté serveur (pas de jeton à gérer).
+//   2. verifierOrigine : si un en-tête Origin est présent, il doit être
+//      autorisé (défense complémentaire, conserve la détection d'un appel
+//      navigateur depuis un site tiers même s'il falsifiait le marqueur).
+// Les clients non navigateurs (scripts internes, intégrations) posent cet
+// en-tête explicitement — cf. docs/DEPLOIEMENT.md (M4).
+
+export function exigerMarqueurMutation(req: Request, _res: Response, next: NextFunction): void {
+  const methode = req.method.toUpperCase();
+  if (methode === "GET" || methode === "HEAD" || methode === "OPTIONS") {
+    next();
+    return;
+  }
+  const marqueur = req.headers["x-requested-with"];
+  if (typeof marqueur === "string" && marqueur.trim().toLowerCase() === "xmlhttprequest") {
+    next();
+    return;
+  }
+  next(
+    new ErreurMetier(
+      403,
+      "Requête mutante refusée : le marqueur d'origine légitime est absent (en-tête X-Requested-With)."
+    )
+  );
+}
+
 const ORIGINES_AUTORISEES = (process.env["ORIGINES_AUTORISEES"] ?? "http://localhost:3000")
   .split(",")
   .map((origine) => origine.trim())

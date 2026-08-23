@@ -8,6 +8,7 @@ import MaterialAssignmentModule from "./components/MaterialAssignmentModule";
 import LoginPage from "./components/LoginPage";
 import ChangePasswordModal from "./components/ChangePasswordModal";
 import JournalAuditModule from "./components/JournalAuditModule";
+import { apiFetch } from "./api";
 import {
   LayoutDashboard,
   RefreshCw,
@@ -103,7 +104,7 @@ export default function App() {
   // critique : une panne réseau ne doit pas spammer l'utilisateur).
   const chargerNotifications = useCallback(async () => {
     try {
-      const res = await fetch("/api/notifications");
+      const res = await apiFetch("/api/notifications");
       if (!res.ok) return;
       const payload = await res.json();
       setNotifications(payload.data.items as NotificationInterne[]);
@@ -126,7 +127,7 @@ export default function App() {
       return;
     }
     try {
-      await fetch(`/api/notifications/${id}/lue`, { method: "POST" });
+      await apiFetch(`/api/notifications/${id}/lue`, { method: "POST" });
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, statut: "LUE" } : n))
       );
@@ -143,7 +144,7 @@ export default function App() {
     setNotificationsLocales([]);
     for (const n of ouvertes) {
       try {
-        await fetch(`/api/notifications/${n.id}/lue`, { method: "POST" });
+        await apiFetch(`/api/notifications/${n.id}/lue`, { method: "POST" });
       } catch {
         // ignore — resynchro périodique
       }
@@ -159,7 +160,7 @@ export default function App() {
   // Toute réponse 401 (session expirée ou révoquée) ramène à l'écran de connexion.
   const fetchSourcingData = async () => {
     try {
-      const response = await fetch("/api/data");
+      const response = await apiFetch("/api/data");
       if (response.status === 401) {
         setProfil(null);
         return;
@@ -187,7 +188,7 @@ export default function App() {
   // Interroge le serveur sur l'identité de la session courante.
   const chargerProfil = async (): Promise<boolean> => {
     try {
-      const res = await fetch("/api/auth/me");
+      const res = await apiFetch("/api/auth/me");
       if (!res.ok) {
         setProfil(null);
         return false;
@@ -225,7 +226,7 @@ export default function App() {
 
   const handleDeconnexion = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {
       // Le cookie est effacé côté serveur de toute façon ; on sort proprement.
     }
