@@ -699,6 +699,39 @@ async function main() {
     }
   });
 
+  // Amorçage des compteurs de références (chantier 3.5) : les jeux de
+  // démonstration insèrent leurs références en dur (STK-001…, MVT-001…,
+  // AFF-DSI-AAAA-NNN…) sans passer par les services. Synchronisés ici,
+  // sinon la première création via un service repartirait à 1 et entrerait
+  // en collision unique (P2002) avec ces références. GREATEST garantit
+  // qu'une ré-exécution du seed ne fait jamais reculer un compteur déjà
+  // avancé par l'usage réel.
+  const amorcerCompteur = async (nom: string, valeur: number) => {
+    await prisma.$executeRaw`
+      INSERT INTO compteurs (nom, valeur)
+      VALUES (${nom}, ${valeur})
+      ON CONFLICT (nom) DO UPDATE SET valeur = GREATEST(compteurs.valeur, ${valeur})`;
+  };
+
+  await amorcerCompteur("article", await prisma.articleStock.count());
+  await amorcerCompteur("mouvement", await prisma.mouvementStock.count());
+
+  const referencesAffectations = await prisma.affectation.findMany({
+    select: { reference: true }
+  });
+  const maximaParAnnee = new Map<string, number>();
+  for (const { reference } of referencesAffectations) {
+    const analyse = /^AFF-[A-Z]+-(\d{4})-(\d{3})$/.exec(reference);
+    if (analyse && analyse[1] && analyse[2]) {
+      const annee = analyse[1];
+      const numero = Number(analyse[2]);
+      maximaParAnnee.set(annee, Math.max(maximaParAnnee.get(annee) ?? 0, numero));
+    }
+  }
+  for (const [annee, maximum] of maximaParAnnee) {
+    await amorcerCompteur(`affectation-${annee}`, maximum);
+  }
+
   const counts = {
     societes: await prisma.societe.count(),
     utilisateurs: await prisma.utilisateur.count(),
