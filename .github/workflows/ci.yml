@@ -1,15 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CI — qualité et non-régression (priorité 4 du plan de corrections restantes)
+# CI — qualité et non-régression (priorité 4, corrigée après premier run réel)
 #
-# NOTE : ce workflow est PRÉPARÉ mais INACTIF tant qu'aucun dépôt distant GitHub
-# n'est connecté au projet (le dépôt local n'a pas de remote ; aucun push n'est
-# effectué depuis cet environnement). Il s'activera automatiquement au premier
-# push / pull request une fois le remote ajouté :
-#   git remote add origin <url> && git push -u origin convergence-parc-it
+# Correctif bootstrap (voir docs/RAPPORT-CORRECTIF-CI-BOOTSTRAP-POSTGRES-SEED.md) :
+# l'ordre est désormais strictement  PostgreSQL healthy → dépendances → Prisma
+# generate/validate → migrate deploy → clé éphémère → SEED → vérification du
+# seed → Vitest → typecheck/lint/builds. Le premier run a montré que les tests
+# d'intégration (RBAC, notifications, pagination) exigent une base seedée.
 #
-# Contenu : installation propre (npm ci), typecheck backend/frontend, ESLint,
-# migrations Prisma sur un PostgreSQL 16 jetable, suite Vitest complète,
-# builds de production backend + frontend.
+# Secrets : aucun secret réel ici — base jetable, clé AES générée à chaque
+# exécution, mot de passe de démo éphémère propre à la CI.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -34,13 +33,13 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
+          --health-cmd "pg_isready -U postgres -d parc_it_ci"
+          --health-interval 1s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 30
 
     env:
-      # Base jetable de CI — jamais celle d'un environnement réel.
+      # Base jetable de CI — la seule utilisée par Prisma, le seed et Vitest.
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/parc_it_ci?schema=public
 
     steps:
@@ -51,6 +50,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Attente de PostgreSQL
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U postgres -d parc_it_ci && exit 0
+            sleep 1
+          done
+          echo "PostgreSQL indisponible après 30 s" >&2
+          exit 1
 
       - name: Installation des dépendances backend
         working-directory: backend
@@ -72,10 +80,49 @@ jobs:
         working-directory: backend
         run: npx prisma migrate deploy
 
-      # Les tests de chiffrement (PIN/PUK au repos) ont besoin d'une clé
-      # AES-256-GCM : on en génère une éphémère, propre à chaque exécution.
+      # Clé AES-256-GCM éphémère : chiffrement des PIN/PUK par le seed et les
+      # tests de chiffrement. Régénérée à chaque exécution, jamais persistée.
       - name: Clé de chiffrement éphémère pour la CI
         run: 'echo "CLE_CHIFFREMENT=$(node -e "console.log(require(''crypto'').randomBytes(32).toString(''base64''))")" >> "$GITHUB_ENV"'
+
+      - name: Seed de la base de test
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          AUTORISER_SEED_DEMO: "true"
+          MOT_DE_PASSE_DEMO: Ci-Test-Password-2026
+        run: npm run db:seed
+
+      - name: Vérification du seed (comptes et référentiels présents)
+        working-directory: backend
+        run: |
+          # Le script vit dans backend/ pour résoudre @prisma/client.
+          cat > check-seed.tmp.cjs <<'EOF'
+          const { PrismaClient } = require("@prisma/client");
+          const prisma = new PrismaClient();
+          (async () => {
+            const roles = await prisma.role.count();
+            const permissions = await prisma.permission.count();
+            const rolePermissions = await prisma.rolePermission.count();
+            const utilisateurs = await prisma.utilisateur.count();
+            console.log(JSON.stringify({ roles, permissions, rolePermissions, utilisateurs }));
+            const manques = [];
+            if (roles === 0) manques.push("roles");
+            if (permissions === 0) manques.push("permissions");
+            if (rolePermissions === 0) manques.push("role_permissions");
+            if (utilisateurs === 0) manques.push("utilisateurs");
+            if (manques.length > 0) {
+              console.error("Seed incomplet — tables vides : " + manques.join(", "));
+              process.exit(1);
+            }
+            await prisma.$disconnect();
+          })().catch((e) => { console.error(e.message); process.exit(1); });
+          EOF
+          node check-seed.tmp.cjs; statut=$?; rm -f check-seed.tmp.cjs; exit $statut
+
+      - name: Tests Vitest (backend)
+        working-directory: backend
+        run: npm test
 
       - name: Typecheck backend
         working-directory: backend
@@ -84,10 +131,6 @@ jobs:
       - name: Lint backend
         working-directory: backend
         run: npm run lint
-
-      - name: Tests Vitest (backend)
-        working-directory: backend
-        run: npm test
 
       - name: Build backend
         working-directory: backend
