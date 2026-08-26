@@ -168,12 +168,15 @@ routerApi.get("/mouvements", exigerPermission("parc.consulter"), h(async (req, r
   res.json({ status: "ok", data: await listerMouvements(schemaPagination.parse(req.query)) });
 }));
 routerApi.get("/stock/search", exigerPermission("parc.consulter"), h(async (req, res) => {
-  const data = await rechercherStock({
+  const pag = schemaPagination.parse(req.query);
+  const result = await rechercherStock({
     q: req.query["q"] as string | undefined,
     category: req.query["category"] as string | undefined,
-    availableOnly: req.query["availableOnly"] === "true" || req.query["availableOnly"] === "1"
+    availableOnly: req.query["availableOnly"] === "true" || req.query["availableOnly"] === "1",
+    page: pag.page,
+    limite: pag.limite
   });
-  res.json({ status: "ok", data });
+  res.json({ status: "ok", data: result });
 }));
 // Mutations créatrices de stock : enveloppe d'idempotence (en-tête
 // `X-Cle-Idempotence` optionnel du client) + contexte acteur pour l'audit.
@@ -254,6 +257,137 @@ routerApi.post("/notifications/:id/lue", h(async (req, res) => {
 routerApi.get("/audit", exigerPermission("audit.consulter"), h(async (req, res) => {
   const filtres = schemaFiltresJournalAudit.parse(req.query);
   res.json({ status: "ok", data: await listerJournal(filtres) });
+}));
+
+// ── Messagerie interne (chat MVP poll-based) ─────────────────────────
+import {
+  creerConversation,
+  listerConversations,
+  obtenirConversation,
+  envoyerMessage,
+  listerMessages,
+  marquerLu,
+  compterNonLus,
+  rechercherUtilisateurs,
+} from "../services/chat.service.js";
+import {
+  uploadPieceJointe,
+  creerEnregistrementPieceJointe,
+  lirePieceJointe,
+} from "../services/attachments.service.js";
+
+routerApi.get("/chat/unread-count", h(async (req, res) => {
+  res.json({ status: "ok", data: { count: await compterNonLus(req.contexteAuth!.utilisateurId) } });
+}));
+
+routerApi.get("/chat/users/search", h(async (req, res) => {
+  const q = (req.query["q"] as string) || "";
+  const me = req.contexteAuth!.utilisateurId;
+  const users = await rechercherUtilisateurs(q, [me]);
+  res.json({ status: "ok", data: users });
+}));
+
+routerApi.get("/chat/conversations", h(async (req, res) => {
+  res.json({ status: "ok", data: await listerConversations(req.contexteAuth!.utilisateurId) });
+}));
+
+routerApi.post("/chat/conversations", h(async (req, res) => {
+  const { titre, participantIds } = req.body as { titre?: string; participantIds: string[] };
+  if (!Array.isArray(participantIds) || participantIds.length === 0) {
+    res.status(400).json({ error: "Au moins un participant requis." });
+    return;
+  }
+  const conv = await creerConversation({ titre, participantIds }, acteurDepuis(req));
+  res.status(201).json({ status: "ok", data: conv });
+}));
+
+routerApi.get("/chat/conversations/:id", h(async (req, res) => {
+  res.json({
+    status: "ok",
+    data: await obtenirConversation(req.params["id"]!, req.contexteAuth!.utilisateurId),
+  });
+}));
+
+routerApi.get("/chat/conversations/:id/messages", h(async (req, res) => {
+  const pag = schemaPagination.parse(req.query);
+  const after = req.query["after"] as string | undefined;
+  res.json({
+    status: "ok",
+    data: await listerMessages(
+      req.params["id"]!,
+      req.contexteAuth!.utilisateurId,
+      { page: pag.page, limite: pag.limite, after }
+    ),
+  });
+}));
+
+routerApi.post("/chat/conversations/:id/messages", h(async (req, res) => {
+  const { contenu, type, imageBase64, imageMime, imageNom } = req.body as {
+    contenu: string;
+    type?: string;
+    imageBase64?: string;
+    imageMime?: string;
+    imageNom?: string;
+  };
+  if (!contenu || contenu.trim() === "") {
+    res.status(400).json({ error: "Le message ne peut pas être vide." });
+    return;
+  }
+
+  const userId = req.contexteAuth!.utilisateurId;
+  let pieceJointeMeta: Awaited<ReturnType<typeof uploadPieceJointe>> | undefined;
+
+  // Si une image est fournie, sauvegarder le fichier sur disque (pas encore en DB)
+  if (imageBase64 && imageMime) {
+    const buffer = Buffer.from(imageBase64, "base64");
+    pieceJointeMeta = await uploadPieceJointe(
+      req.params["id"]!,
+      userId,
+      {
+        buffer,
+        originalname: imageNom || "image",
+        mimetype: imageMime,
+        size: buffer.length,
+      }
+    );
+  }
+
+  // Créer le message (IMAGE si pièce jointe, sinon TEXTE)
+  const msg = await envoyerMessage(
+    req.params["id"]!,
+    {
+      contenu: contenu.trim() || (pieceJointeMeta ? `[Image: ${imageNom || "image"}]` : contenu),
+      type: pieceJointeMeta ? "IMAGE" : (type || "TEXTE"),
+    },
+    acteurDepuis(req)
+  );
+
+  // Si image : créer l'enregistrement PieceJointe avec le vrai messageId, puis update le message
+  if (pieceJointeMeta) {
+    const pj = await creerEnregistrementPieceJointe(msg.id, pieceJointeMeta);
+    const fichierUrl = `/api/chat/attachments/${pj.id}`;
+    // Mettre à jour le message avec l'URL de la pièce jointe
+    await prisma.message.update({
+      where: { id: msg.id },
+      data: { fichierUrl, fichierType: imageMime! },
+    });
+    msg.fichierUrl = fichierUrl;
+    msg.fichierType = imageMime!;
+  }
+
+  res.status(201).json({ status: "ok", data: msg });
+}));
+
+routerApi.get("/chat/attachments/:id", h(async (req, res) => {
+  const data = await lirePieceJointe(req.params["id"]!, req.contexteAuth!.utilisateurId);
+  res.setHeader("Content-Type", data.mimeType);
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  res.send(data.buffer);
+}));
+
+routerApi.post("/chat/conversations/:id/read", h(async (req, res) => {
+  await marquerLu(req.params["id"]!, req.contexteAuth!.utilisateurId);
+  res.json({ status: "ok" });
 }));
 
 // ── Gestionnaire d'erreurs central ────────────────────────────────────

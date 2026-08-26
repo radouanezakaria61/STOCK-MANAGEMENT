@@ -482,7 +482,7 @@ export default function DashboardOverview({
                     axisLine={false} 
                   />
                   <Tooltip 
-                    formatter={(val) => [`${Number(val).toLocaleString()} unités`, lang === "FR" ? "Volume mouvementé" : "Moved Volume"]}
+                    formatter={(val: number | string) => [`${Number(val).toLocaleString()} unités`, lang === "FR" ? "Volume mouvementé" : "Moved Volume"]}
                     contentStyle={{ borderRadius: "12px", border: "1px solid #E2E8F0" }}
                   />
                   <Area type="monotone" dataKey="quantite" stroke="#059669" strokeWidth={3} fillOpacity={1} fill="url(#gradientStockChart)" />

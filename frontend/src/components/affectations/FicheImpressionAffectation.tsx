@@ -1,4 +1,4 @@
-import { Download, Printer, X } from "lucide-react";
+import { Download, Printer, ExternalLink, X } from "lucide-react";
 import { MaterialAssignment } from "../../types";
 import { exportAssignmentToPDF } from "../../utils/pdfGenerator";
 
@@ -12,6 +12,35 @@ interface FicheImpressionAffectationProps {
 // L'export PDF passe par un import dynamique de jsPDF cote pdfGenerator.
 export default function FicheImpressionAffectation({ assignment, onFermer }: FicheImpressionAffectationProps) {
   const gererImpressionNavigateur = () => window.print();
+
+  const ouvrirNouvelOnglet = () => {
+    const el = document.getElementById("printable-handover-slip");
+    if (!el) return;
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="fr">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Fiche d'Affectation — ${assignment.reference || "IT"}</title>
+        <style>
+          @media print { @page { margin: 10mm; size: A4; } body { margin: 0; } }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; padding: 16px; max-width: 210mm; margin: 0 auto; font-size: 12px; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #334155; padding: 4px 6px; text-align: left; font-size: 11px; }
+          th { background: #f1f5f9; font-weight: 700; }
+          .sig-box { border-top: 1px solid #334155; padding-top: 8px; margin-top: 24px; display: flex; justify-content: space-between; }
+          .sig-box > div { width: 45%; }
+        </style>
+      </head>
+      <body>${el.innerHTML}</body>
+      </html>`;
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.write(htmlContent);
+      w.document.close();
+      setTimeout(() => w.print(), 600);
+    }
+  };
 
   return (
         <div 
@@ -40,6 +69,13 @@ export default function FicheImpressionAffectation({ assignment, onFermer }: Fic
                   className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                 >
                   <Download size={14} /> Exporter PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={ouvrirNouvelOnglet}
+                  className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <ExternalLink size={14} /> Nouvel onglet
                 </button>
                 <button
                   type="button"
