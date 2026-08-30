@@ -1,47 +1,39 @@
 import { apiFetch } from "../api";
 import React, { useState, useEffect } from "react";
-import { MaterialAssignment, ITStockItem, AppUser, ReturnCause, EquipmentReturnCondition, TelecomOperator, AssignedResourceType, OperationType, RestitutedDeviceCondition, AssignedItemDetail, MaterialReturnRecord } from "../types";
+import {
+  MaterialAssignment,
+  ITStockItem,
+  AppUser,
+  ReturnCause,
+  EquipmentReturnCondition,
+  TelecomOperator,
+  AssignedResourceType,
+  OperationType,
+  RestitutedDeviceCondition,
+  AssignedItemDetail,
+  MaterialReturnRecord,
+} from "../types";
 import FicheImpressionAffectation from "./affectations/FicheImpressionAffectation";
 import FicheImpressionRestitution from "./affectations/FicheImpressionRestitution";
 import {
   FileCheck2,
-  Plus,
-  Printer,
+  X,
   RotateCcw,
-  Search,
-  CheckCircle2,
-  AlertTriangle,
-  User,
-  Building2,
-  Calendar,
-  Layers,
-  Sparkles,
-  Shield,
-  Laptop,
   CheckSquare,
   Square,
-  HelpCircle,
-  FileText,
-  Clock,
-  ArrowRight,
-  UserCheck,
-  X,
-  Send,
-  Trash2,
-  ShieldCheck,
-  Eye,
-  Info,
-  Smartphone,
-  Radio,
-  Hash,
-  MapPin,
-  Check,
-  Monitor,
-  Cpu,
-  HardDrive,
-  PackageCheck,
-  SlidersHorizontal
+  SlidersHorizontal,
 } from "lucide-react";
+import {
+  SummaryCards,
+  SearchFilterBar,
+  AssignmentsTable,
+  BeneficiarySection,
+  ResourceTypeSelector,
+  SimDetailsSection,
+  SmartphoneDetailsSection,
+  OperationSection,
+  StockSelector,
+} from "./assignments";
 
 interface MaterialAssignmentModuleProps {
   assignments: MaterialAssignment[];
@@ -58,26 +50,31 @@ export default function MaterialAssignmentModule({
   users,
   currentUser,
   onRefresh,
-  onSelectTab
+  onSelectTab,
 }: MaterialAssignmentModuleProps) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeSubTab, setActiveSubTab] = useState<"all" | "active" | "returned">("all");
-  const [selectedAssignmentForPrint, setSelectedAssignmentForPrint] = useState<MaterialAssignment | null>(null);
-  const [selectedAssignmentForReturn, setSelectedAssignmentForReturn] = useState<MaterialAssignment | null>(null);
-  const [selectedAssignmentForReturnPrint, setSelectedAssignmentForReturnPrint] = useState<MaterialAssignment | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<
+    "all" | "active" | "returned"
+  >("all");
+  const [selectedAssignmentForPrint, setSelectedAssignmentForPrint] =
+    useState<MaterialAssignment | null>(null);
+  const [selectedAssignmentForReturn, setSelectedAssignmentForReturn] =
+    useState<MaterialAssignment | null>(null);
+  const [selectedAssignmentForReturnPrint, setSelectedAssignmentForReturnPrint] =
+    useState<MaterialAssignment | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Clé d'idempotence (chantier 3) : régénérée à l'ouverture de la fenêtre de
-  // création, stable pendant la saisie — un double clic sur « Valider » ne
-  // crée jamais deux fiches, et ne consomme pas deux fois le stock.
-  const [cleIdempotenceAffectation, setCleIdempotenceAffectation] = useState(() => crypto.randomUUID());
+  const [cleIdempotenceAffectation, setCleIdempotenceAffectation] = useState(
+    () => crypto.randomUUID()
+  );
   const ouvrirCreation = () => {
     setCleIdempotenceAffectation(crypto.randomUUID());
     setShowCreateModal(true);
   };
   const [loadingAction, setLoadingAction] = useState(false);
+  const [showConfirmSummary, setShowConfirmSummary] = useState(false);
+  const [reassignAfterId, setReassignAfterId] = useState<string | null>(null);
 
-  // Global Escape key listener to close modals easily
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -91,10 +88,12 @@ export default function MaterialAssignmentModule({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Mode Selection for New Assignment
-  const [assignmentTemplateType, setAssignmentTemplateType] = useState<"DISTRA_SIM_SMARTPHONE" | "STANDARD_DSI_EQUIPMENT">("DISTRA_SIM_SMARTPHONE");
+  // Template type
+  const [assignmentTemplateType, setAssignmentTemplateType] = useState<
+    "DISTRA_SIM_SMARTPHONE" | "STANDARD_DSI_EQUIPMENT"
+  >("DISTRA_SIM_SMARTPHONE");
 
-  // Common Form State for New Assignment
+  // Beneficiary form
   const [formBeneficiaryName, setFormBeneficiaryName] = useState("");
   const [formBeneficiaryEmail, setFormBeneficiaryEmail] = useState("");
   const [formBeneficiaryPhone, setFormBeneficiaryPhone] = useState("");
@@ -102,13 +101,20 @@ export default function MaterialAssignmentModule({
   const [formBeneficiaryJob, setFormBeneficiaryJob] = useState("");
   const [formBeneficiaryDept, setFormBeneficiaryDept] = useState("BU - Comm");
   const [formBeneficiarySite, setFormBeneficiarySite] = useState("Berrechid");
-  const [formAssignedDate, setFormAssignedDate] = useState(new Date().toISOString().split("T")[0]);
-  const [formAuthorizedBy, setFormAuthorizedBy] = useState(currentUser?.name || "Directeur Systèmes d'Information");
-  const [formDsiTitle, setFormDsiTitle] = useState("Département Systèmes D'Information");
+  const [formAssignedDate, setFormAssignedDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
+  const [formAuthorizedBy, setFormAuthorizedBy] = useState(
+    currentUser?.name || "Directeur Systèmes d'Information"
+  );
+  const [formDsiTitle, setFormDsiTitle] = useState(
+    "Département Systèmes D'Information"
+  );
   const [formNotes, setFormNotes] = useState("");
 
-  // Distra SIM & Smartphone Form State
-  const [formResourceType, setFormResourceType] = useState<AssignedResourceType>("Carte SIM + SmartPhone");
+  // Distra SIM & Smartphone
+  const [formResourceType, setFormResourceType] =
+    useState<AssignedResourceType>("Carte SIM + SmartPhone");
   const [formSimOperator, setFormSimOperator] = useState<TelecomOperator>("IAM");
   const [formSimPhoneNumber, setFormSimPhoneNumber] = useState("");
   const [formSimPuk, setFormSimPuk] = useState("");
@@ -116,69 +122,68 @@ export default function MaterialAssignmentModule({
   const [formDeviceBrand, setFormDeviceBrand] = useState("HP");
   const [formDeviceImei, setFormDeviceImei] = useState("");
   const [formDeviceModel, setFormDeviceModel] = useState("15-AY002NK");
-  const [formDeviceConfiguration, setFormDeviceConfiguration] = useState("4 GB | 500 GB");
-  const [formOperationType, setFormOperationType] = useState<OperationType>("AFFECTATION");
-  const [formRestitutionPreviousDevice, setFormRestitutionPreviousDevice] = useState<"OUI" | "NON">("NON");
-  const [formRestitatedDeviceCondition, setFormRestitatedDeviceCondition] = useState<RestitutedDeviceCondition>("Non applicable");
-  const [formIncidentRemarks, setFormIncidentRemarks] = useState("INCIDENT / PANNE");
+  const [formDeviceConfiguration, setFormDeviceConfiguration] = useState(
+    "4 GB | 500 GB"
+  );
+  const [formOperationType, setFormOperationType] =
+    useState<OperationType>("AFFECTATION");
+  const [formRestitutionPreviousDevice, setFormRestitutionPreviousDevice] =
+    useState<"OUI" | "NON">("NON");
+  const [formRestitatedDeviceCondition, setFormRestitatedDeviceCondition] =
+    useState<RestitutedDeviceCondition>("Non applicable");
+  const [formIncidentRemarks, setFormIncidentRemarks] =
+    useState("INCIDENT / PANNE");
 
-  // Distra IT Equipment Form State
-  const [formEquipmentType, setFormEquipmentType] = useState("Ordinateur / PC");
+  // Distra IT Equipment
+  const [formEquipmentType, setFormEquipmentType] = useState(
+    "Ordinateur / PC"
+  );
   const [formEquipmentCpu, setFormEquipmentCpu] = useState("Intel i7");
   const [formEquipmentRam, setFormEquipmentRam] = useState("8");
   const [formEquipmentStorage, setFormEquipmentStorage] = useState("256");
-  const [formEquipmentAcquisitionDate, setFormEquipmentAcquisitionDate] = useState("2021-12-06");
+  const [formEquipmentAcquisitionDate, setFormEquipmentAcquisitionDate] =
+    useState("2021-12-06");
   const [formHasKeyboard, setFormHasKeyboard] = useState(false);
   const [formHasMouse, setFormHasMouse] = useState(false);
   const [formHasUsbAdapter, setFormHasUsbAdapter] = useState(false);
-  
-  // Selected stock items for standard assignment: array of { stockItemId, condition, accessories: string[] }
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
-  const [itemAccessoriesMap, setItemAccessoriesMap] = useState<{ [id: string]: string[] }>({});
-  const [itemConditionMap, setItemConditionMap] = useState<{ [id: string]: "Neuf / Excellent état" | "Très bon état" | "Bon état" }>({});
-  const [stockSearchQuery, setStockSearchQuery] = useState("");
-  const [stockCategoryFilter, setStockCategoryFilter] = useState("Tous");
 
-  // Form State for Return Process
-  const [returnDate, setReturnDate] = useState(new Date().toISOString().split("T")[0]);
-  const [returnCause, setReturnCause] = useState<ReturnCause>("Départ collaborateur (Fin de contrat / Démission)");
+  // Stock selection
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [selectedStockItems, setSelectedStockItems] = useState<ITStockItem[]>([]);
+  const [itemAccessoriesMap, setItemAccessoriesMap] = useState<
+    Record<string, string[]>
+  >({});
+  const [itemConditionMap, setItemConditionMap] = useState<
+    Record<string, AssignedItemDetail["condition"]>
+  >({});
+
+  // Return form
+  const [returnDate, setReturnDate] = useState(
+    new Date().toISOString().split("T")[0]
+  );
+  const [returnCause, setReturnCause] = useState<ReturnCause>(
+    "Départ collaborateur (Fin de contrat / Démission)"
+  );
   const [customReturnCause, setCustomReturnCause] = useState("");
-  const [equipmentCondition, setEquipmentCondition] = useState<EquipmentReturnCondition>("Bon état");
+  const [equipmentCondition, setEquipmentCondition] =
+    useState<EquipmentReturnCondition>("Bon état");
   const [accessoriesReturned, setAccessoriesReturned] = useState<string[]>([]);
   const [dataWiped, setDataWiped] = useState(true);
   const [bitlockerUnlocked, setBitlockerUnlocked] = useState(true);
-  const [technicalDiagnosis, setTechnicalDiagnosis] = useState("Équipement inspecté par la DSI. Fonctionnement normal, aucun dommage critique.");
-  const [actionTaken, setActionTaken] = useState<"Remise en stock disponible" | "Envoi en maintenance / SAV" | "Mise au rebut">("Remise en stock disponible");
-  const [inspectedBy, setInspectedBy] = useState(currentUser?.name || "Zakaria Radouane (DSI)");
+  const [technicalDiagnosis, setTechnicalDiagnosis] = useState(
+    "Équipement inspecté par la DSI. Fonctionnement normal, aucun dommage critique."
+  );
+  const [actionTaken, setActionTaken] = useState<
+    "Remise en stock disponible" | "Envoi en maintenance / SAV" | "Mise au rebut"
+  >("Remise en stock disponible");
+  const [inspectedBy, setInspectedBy] = useState(
+    currentUser?.name || "Zakaria Radouane (DSI)"
+  );
   const [returnNotes, setReturnNotes] = useState("");
 
-  // Available stock items for assignment (quantity > 0 and not allocated)
-  const availableStock = stockItems.filter(item => (item.availableQty > 0 || item.status === "En Stock"));
-
-  // Filtered available stock based on live search query and category
-  const filteredAvailableStock = availableStock.filter(item => {
-    const matchesCat = stockCategoryFilter === "Tous" || item.category === stockCategoryFilter;
-    if (!matchesCat) return false;
-
-    if (!stockSearchQuery.trim()) return true;
-    const q = stockSearchQuery.toLowerCase().trim();
-    return (
-      item.name?.toLowerCase().includes(q) ||
-      item.brand?.toLowerCase().includes(q) ||
-      item.model?.toLowerCase().includes(q) ||
-      item.serialNumber?.toLowerCase().includes(q) ||
-      item.assetTag?.toLowerCase().includes(q) ||
-      item.category?.toLowerCase().includes(q) ||
-      item.specs?.cpu?.toLowerCase().includes(q) ||
-      item.specs?.ram?.toLowerCase().includes(q) ||
-      item.specs?.storage?.toLowerCase().includes(q)
-    );
-  });
-
-  // Pre-fill user details if selecting existing user
   const handleSelectPredefinedUser = (userName: string) => {
     setFormBeneficiaryName(userName);
-    const foundUser = users.find(u => u.name === userName);
+    const foundUser = users.find((u) => u.name === userName);
     if (foundUser) {
       setFormBeneficiaryEmail(foundUser.email);
       setFormBeneficiaryDept(foundUser.department);
@@ -186,140 +191,93 @@ export default function MaterialAssignmentModule({
     }
   };
 
-  const syncPrimaryEquipmentFields = (currentIds: string[]) => {
-    if (currentIds.length === 0) return;
-    const firstItem = stockItems.find(i => i.id === currentIds[0]);
-    if (firstItem) {
-      setFormEquipmentType(firstItem.category || firstItem.name || "Ordinateur / PC");
-      if (firstItem.brand) setFormDeviceBrand(firstItem.brand);
-      if (firstItem.model) setFormDeviceModel(firstItem.model);
-      if (firstItem.serialNumber) setFormDeviceImei(firstItem.serialNumber);
-      if (firstItem.specs) {
-        if (firstItem.specs.cpu) setFormEquipmentCpu(firstItem.specs.cpu);
-        if (firstItem.specs.ram) setFormEquipmentRam(firstItem.specs.ram.replace(/[^0-9]/g, "") || "8");
-        if (firstItem.specs.storage) setFormEquipmentStorage(firstItem.specs.storage.replace(/[^0-9]/g, "") || "256");
-      }
-    }
-  };
-
-  const toggleStockItemSelection = (itemId: string) => {
+  const toggleStockItemSelection = (item: ITStockItem) => {
+    const itemId = item.id;
     if (selectedItemIds.includes(itemId)) {
-      const next = selectedItemIds.filter(id => id !== itemId);
-      setSelectedItemIds(next);
-      syncPrimaryEquipmentFields(next);
+      setSelectedItemIds((prev) => prev.filter((id) => id !== itemId));
+      setSelectedStockItems((prev) => prev.filter((i) => i.id !== itemId));
     } else {
-      const next = [...selectedItemIds, itemId];
-      setSelectedItemIds(next);
-      syncPrimaryEquipmentFields(next);
-      // Default accessories for this item
+      setSelectedItemIds((prev) => [...prev, itemId]);
+      setSelectedStockItems((prev) => [...prev, item]);
       if (!itemAccessoriesMap[itemId]) {
-        setItemAccessoriesMap(prev => ({
+        setItemAccessoriesMap((prev) => ({
           ...prev,
-          [itemId]: ["Chargeur secteur d'origine", "Câble d'alimentation"]
+          [itemId]: ["Chargeur secteur d'origine", "Câble d'alimentation"],
         }));
       }
       if (!itemConditionMap[itemId]) {
-        setItemConditionMap(prev => ({
+        setItemConditionMap((prev) => ({
           ...prev,
-          [itemId]: "Neuf / Excellent état"
+          [itemId]: "Neuf / Excellent état",
         }));
       }
     }
   };
 
   const removeStockItem = (itemId: string) => {
-    const next = selectedItemIds.filter(id => id !== itemId);
-    setSelectedItemIds(next);
-    syncPrimaryEquipmentFields(next);
+    setSelectedItemIds((prev) => prev.filter((id) => id !== itemId));
+    setSelectedStockItems((prev) => prev.filter((i) => i.id !== itemId));
   };
 
-  const setItemCondition = (itemId: string, cond: "Neuf / Excellent état" | "Très bon état" | "Bon état") => {
-    setItemConditionMap(prev => ({
-      ...prev,
-      [itemId]: cond
-    }));
+  const setItemCondition = (
+    itemId: string,
+    cond: AssignedItemDetail["condition"]
+  ) => {
+    setItemConditionMap((prev) => ({ ...prev, [itemId]: cond }));
   };
 
   const toggleAccessory = (itemId: string, accessory: string) => {
-    const current = itemAccessoriesMap[itemId] || [];
-    if (current.includes(accessory)) {
-      setItemAccessoriesMap(prev => ({
-        ...prev,
-        [itemId]: current.filter(a => a !== accessory)
-      }));
-    } else {
-      setItemAccessoriesMap(prev => ({
-        ...prev,
-        [itemId]: [...current, accessory]
-      }));
-    }
+    setItemAccessoriesMap((prev) => {
+      const current = prev[itemId] || [];
+      const next = current.includes(accessory)
+        ? current.filter((a) => a !== accessory)
+        : [...current, accessory];
+      return { ...prev, [itemId]: next };
+    });
   };
 
-  // Submit New Assignment
+  // Submit new assignment
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formBeneficiaryName) {
       alert("Veuillez renseigner le nom complet du collaborateur.");
       return;
     }
-
-    if (assignmentTemplateType === "STANDARD_DSI_EQUIPMENT" && selectedItemIds.length === 0) {
+    if (
+      assignmentTemplateType === "STANDARD_DSI_EQUIPMENT" &&
+      selectedItemIds.length === 0
+    ) {
       alert("Veuillez sélectionner au moins un équipement en stock à affecter.");
       return;
     }
+    setShowConfirmSummary(true);
+  };
+
+  const handleConfirmSubmitAssignment = async () => {
+    setShowConfirmSummary(false);
 
     setLoadingAction(true);
     try {
-      const itemsPayload = selectedItemIds.map(id => ({
+      const itemsPayload = selectedItemIds.map((id) => ({
         stockItemId: id,
         condition: itemConditionMap[id] || "Neuf / Excellent état",
-        accessories: itemAccessoriesMap[id] || ["Chargeur secteur", "Câble d'alimentation"]
+        accessories: itemAccessoriesMap[id] || [
+          "Chargeur secteur",
+          "Câble d'alimentation",
+        ],
       }));
 
-      const isSim = formResourceType === "Carte SIM" || formResourceType === "Carte SIM + SmartPhone";
-      const isPhone = formResourceType === "SmartPhone" || formResourceType === "Carte SIM + SmartPhone";
+      const isSim =
+        formResourceType === "Carte SIM" ||
+        formResourceType === "Carte SIM + SmartPhone";
+      const isPhone =
+        formResourceType === "SmartPhone" ||
+        formResourceType === "Carte SIM + SmartPhone";
 
-      const payloadBody: {
-        templateType?: string;
-        formCode?: string;
-        beneficiaryName: string;
-        beneficiaryEmail: string;
-        beneficiaryPhone: string;
-        beneficiaryCin: string;
-        beneficiaryJobTitle: string;
-        beneficiaryDepartment: string;
-        beneficiarySite: string;
-        assignedDate: string;
-        authorizedBy: string;
-        dsiTitle: string;
-        items: typeof itemsPayload;
-        notes: string;
-        resourceType?: AssignedResourceType;
-        hasSimCard?: boolean;
-        simOperator?: TelecomOperator;
-        simPhoneNumber?: string;
-        simPuk?: string;
-        simPin?: string;
-        hasSmartphone?: boolean;
-        deviceBrand?: string;
-        deviceImei?: string;
-        deviceModel?: string;
-        deviceConfiguration?: string;
-        operationType?: OperationType;
-        restitutionPreviousDevice?: "OUI" | "NON";
-        restitutedDeviceCondition?: RestitutedDeviceCondition;
-        incidentRemarks?: string;
-        equipmentType?: string;
-        equipmentCpu?: string;
-        equipmentRam?: string;
-        equipmentStorage?: string;
-        equipmentAcquisitionDate?: string;
-        hasKeyboard?: boolean;
-        hasMouse?: boolean;
-        hasUsbAdapter?: boolean;
-      } = {
+      const payloadBody: Record<string, unknown> = {
         templateType: assignmentTemplateType,
-        formCode: assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" ? "IT-02" : "IT-01",
+        formCode:
+          assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" ? "IT-02" : "IT-01",
         beneficiaryName: formBeneficiaryName,
         beneficiaryEmail: formBeneficiaryEmail,
         beneficiaryPhone: formBeneficiaryPhone || formSimPhoneNumber,
@@ -331,7 +289,8 @@ export default function MaterialAssignmentModule({
         authorizedBy: formAuthorizedBy,
         dsiTitle: formDsiTitle,
         items: itemsPayload,
-        notes: formNotes
+        notes: formNotes,
+        ...(reassignAfterId ? { reaffecteApresId: reassignAfterId } : {}),
       };
 
       if (assignmentTemplateType === "DISTRA_SIM_SMARTPHONE") {
@@ -367,15 +326,14 @@ export default function MaterialAssignmentModule({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Cle-Idempotence": cleIdempotenceAffectation
+          "X-Cle-Idempotence": cleIdempotenceAffectation,
         },
-        body: JSON.stringify(payloadBody)
+        body: JSON.stringify(payloadBody),
       });
 
       if (res.ok) {
         const payload = await res.json();
         setShowCreateModal(false);
-        // Reset form
         setFormBeneficiaryName("");
         setFormBeneficiaryEmail("");
         setFormBeneficiaryPhone("");
@@ -386,8 +344,9 @@ export default function MaterialAssignmentModule({
         setFormSimPin("");
         setFormDeviceImei("");
         setSelectedItemIds([]);
+        setSelectedStockItems([]);
+        setReassignAfterId(null);
         onRefresh();
-        // Immediately show the printable slip for the created assignment!
         if (payload.data) {
           setSelectedAssignmentForPrint(payload.data);
         }
@@ -403,84 +362,108 @@ export default function MaterialAssignmentModule({
     }
   };
 
-  // Open Return Modal
   const handleOpenReturnModal = (assignment: MaterialAssignment) => {
     setSelectedAssignmentForReturn(assignment);
     setReturnDate(new Date().toISOString().split("T")[0]);
     setReturnCause("Départ collaborateur (Fin de contrat / Démission)");
     setEquipmentCondition("Bon état");
-    // Pre-fill all accessories that were given
-    const allAssignedAccessories = assignment.items.flatMap(i => i.accessories || []);
+    const allAssignedAccessories = assignment.items.flatMap(
+      (i) => i.accessories || []
+    );
     const uniqueAccessories = Array.from(new Set(allAssignedAccessories));
     setAccessoriesReturned(uniqueAccessories);
     setDataWiped(true);
     setBitlockerUnlocked(true);
-    setTechnicalDiagnosis("Matériel restitué à la DSI. Contrôle technique conforme, réinitialisation prête.");
+    setTechnicalDiagnosis(
+      "Matériel restitué à la DSI. Contrôle technique conforme, réinitialisation prête."
+    );
     setActionTaken("Remise en stock disponible");
     setReturnNotes("");
   };
 
-  // Chantier 3.5 : les PIN/PUK ne transitent plus dans les listes. À
-  // l'ouverture de la fiche, on demande la révélation au serveur (permission
-  // « affectations.confidentiels », action auditée). Sans autorisation :
-  // affichage « — » silencieux.
+  const handleReassign = (assignment: MaterialAssignment) => {
+    setCleIdempotenceAffectation(crypto.randomUUID());
+    setReassignAfterId(assignment.id);
+    setShowCreateModal(true);
+    setFormBeneficiaryName("");
+    setFormBeneficiaryEmail("");
+    setFormBeneficiaryPhone("");
+    setFormBeneficiaryCin("");
+    setFormBeneficiaryJob("");
+    setFormBeneficiaryDept("");
+    setFormBeneficiarySite("");
+    setFormAssignedDate(new Date().toISOString().split("T")[0]!);
+    setSelectedItemIds([]);
+    setSelectedStockItems([]);
+    setFormNotes(`Réaffectation post-restitution de ${assignment.reference}`);
+    setFormOperationType("RÉAFFECTATION");
+  };
+
   const handleOuvrirImpression = async (assignment: MaterialAssignment) => {
     setSelectedAssignmentForPrint(assignment);
     try {
-      const r = await apiFetch(`/api/assignments/${assignment.id}/confidentiels`);
+      const r = await apiFetch(
+        `/api/assignments/${assignment.id}/confidentiels`
+      );
       if (r.ok) {
         const p = await r.json();
         setSelectedAssignmentForPrint({
           ...assignment,
           simPin: p.data.simPin || undefined,
-          simPuk: p.data.simPuk || undefined
+          simPuk: p.data.simPuk || undefined,
         });
       }
     } catch {
-      // Révélation indisponible : la fiche s'affiche sans codes.
+      // Révélation indisponible
     }
   };
 
-  // Submit Return
   const handleSubmitReturn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAssignmentForReturn) return;
 
     setLoadingAction(true);
     try {
-      const allOriginalAccessories = selectedAssignmentForReturn.items.flatMap(i => i.accessories || []);
-      const missing = allOriginalAccessories.filter(a => !accessoriesReturned.includes(a));
+      const allOriginalAccessories =
+        selectedAssignmentForReturn.items.flatMap((i) => i.accessories || []);
+      const missing = allOriginalAccessories.filter(
+        (a) => !accessoriesReturned.includes(a)
+      );
 
-      const res = await apiFetch(`/api/assignments/${selectedAssignmentForReturn.id}/return`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          returnDate,
-          cause: returnCause,
-          customCause: customReturnCause,
-          equipmentCondition,
-          accessoriesReturned,
-          missingAccessories: missing,
-          dataWiped,
-          bitlockerUnlocked,
-          technicalDiagnosis,
-          actionTaken,
-          inspectedBy,
-          notes: returnNotes
-        })
-      });
+      const res = await apiFetch(
+        `/api/assignments/${selectedAssignmentForReturn.id}/return`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            returnDate,
+            cause: returnCause,
+            customCause: customReturnCause,
+            equipmentCondition,
+            accessoriesReturned,
+            missingAccessories: missing,
+            dataWiped,
+            bitlockerUnlocked,
+            technicalDiagnosis,
+            actionTaken,
+            inspectedBy,
+            notes: returnNotes,
+          }),
+        }
+      );
 
       if (res.ok) {
         const payload = await res.json();
         setSelectedAssignmentForReturn(null);
         onRefresh();
-        // Show printable return slip
         if (payload.data?.assignment) {
           setSelectedAssignmentForReturnPrint(payload.data.assignment);
         }
       } else {
         const errData = await res.json();
-        alert(errData.error || "Erreur lors de l'enregistrement de la restitution.");
+        alert(
+          errData.error || "Erreur lors de l'enregistrement de la restitution."
+        );
       }
     } catch (err) {
       console.error(err);
@@ -490,326 +473,52 @@ export default function MaterialAssignmentModule({
     }
   };
 
-  // Filtered assignments
-  const filteredAssignments = assignments.filter(a => {
+  const filteredAssignments = assignments.filter((a) => {
     const matchesSearch =
       a.beneficiaryName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       a.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      a.beneficiaryDepartment.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (a.beneficiaryCin && a.beneficiaryCin.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      a.items.some(i => i.name.toLowerCase().includes(searchTerm.toLowerCase()) || i.serialNumber.toLowerCase().includes(searchTerm.toLowerCase()));
-
-    if (activeSubTab === "active") return matchesSearch && a.status === "Active";
-    if (activeSubTab === "returned") return matchesSearch && a.status === "Restitué";
+      a.beneficiaryDepartment
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      (a.beneficiaryCin &&
+        a.beneficiaryCin.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      a.items.some(
+        (i) =>
+          i.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          i.serialNumber.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    if (activeSubTab === "active")
+      return matchesSearch && a.status === "Active";
+    if (activeSubTab === "returned")
+      return matchesSearch && a.status === "Restitué";
     return matchesSearch;
   });
 
-  const activeCount = assignments.filter(a => a.status === "Active").length;
-  const returnedCount = assignments.filter(a => a.status === "Restitué").length;
-  const totalItemsAllocated = assignments
-    .filter(a => a.status === "Active")
-    .reduce((acc, a) => acc + a.items.length, 0);
-
   return (
     <div className="space-y-6">
-      
-      {/* 1. TOP HEADER & OVERVIEW CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Affectations Actives</span>
-            <h3 className="text-2xl font-black text-slate-900 mt-1">{activeCount}</h3>
-            <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
-              <CheckCircle2 size={12} /> Collaborateurs dotés
-            </span>
-          </div>
-          <div className="w-11 h-11 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center border border-indigo-100">
-            <UserCheck size={22} />
-          </div>
-        </div>
+      <SummaryCards assignments={assignments} stockItems={stockItems} />
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Matériels en Circulation</span>
-            <h3 className="text-2xl font-black text-indigo-600 mt-1">{totalItemsAllocated}</h3>
-            <span className="text-[11px] text-slate-500 font-medium mt-0.5">PC, Écrans & Périphériques</span>
-          </div>
-          <div className="w-11 h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100">
-            <Laptop size={22} />
-          </div>
-        </div>
+      <SearchFilterBar
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        activeSubTab={activeSubTab}
+        onSubTabChange={setActiveSubTab}
+        assignments={assignments}
+        onCreateClick={ouvrirCreation}
+      />
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Restitutions & Retours</span>
-            <h3 className="text-2xl font-black text-slate-800 mt-1">{returnedCount}</h3>
-            <span className="text-[11px] text-slate-500 font-medium mt-0.5">Décharges clôturées DSI</span>
-          </div>
-          <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
-            <RotateCcw size={22} />
-          </div>
-        </div>
+      <AssignmentsTable
+        assignments={filteredAssignments}
+        onViewPdf={handleOuvrirImpression}
+        onReturn={handleOpenReturnModal}
+        onViewReturnPdf={setSelectedAssignmentForReturnPrint}
+        onReassign={handleReassign}
+      />
 
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Stock Disponible</span>
-            <h3 className="text-2xl font-black text-emerald-700 mt-1">{availableStock.length}</h3>
-            <span className="text-[11px] text-slate-500 font-medium mt-0.5">Équipements prêts à doter</span>
-          </div>
-          <div className="w-11 h-11 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center border border-emerald-100">
-            <ShieldCheck size={22} />
-          </div>
-        </div>
-      </div>
-
-      {/* 2. CONTROL BAR & ACTIONS */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-4">
-        
-        {/* Search Input */}
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-          <input
-            type="text"
-            placeholder="Rechercher par nom, CIN, N° série, référence..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500 focus:bg-white transition"
-          />
-        </div>
-
-        {/* Sub-tabs Filters */}
-        <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto">
-          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-            <button
-              onClick={() => setActiveSubTab("all")}
-              className={`text-xs px-3 py-1.5 rounded-md font-semibold transition cursor-pointer ${
-                activeSubTab === "all" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              Toutes ({assignments.length})
-            </button>
-            <button
-              onClick={() => setActiveSubTab("active")}
-              className={`text-xs px-3 py-1.5 rounded-md font-semibold transition cursor-pointer ${
-                activeSubTab === "active" ? "bg-white text-indigo-600 shadow-xs font-bold" : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              En cours ({activeCount})
-            </button>
-            <button
-              onClick={() => setActiveSubTab("returned")}
-              className={`text-xs px-3 py-1.5 rounded-md font-semibold transition cursor-pointer ${
-                activeSubTab === "returned" ? "bg-white text-slate-800 shadow-xs font-bold" : "text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              Restituées ({returnedCount})
-            </button>
-          </div>
-
-            <button
-              onClick={ouvrirCreation}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer"
-          >
-            <Plus size={14} /> Nouvelle Fiche d'Affectation
-          </button>
-        </div>
-      </div>
-
-      {/* 3. ASSIGNMENTS LIST TABLE */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                <th className="py-3 px-4">Réf. Fiche</th>
-                <th className="py-3 px-4">Bénéficiaire & CIN</th>
-                <th className="py-3 px-4">Département & Fonction</th>
-                <th className="py-3 px-4">Matériels Affectés</th>
-                <th className="py-3 px-4">Date Affectation</th>
-                <th className="py-3 px-4">Statut</th>
-                <th className="py-3 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs">
-              {filteredAssignments.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-10 text-center text-slate-400">
-                    <FileCheck2 size={32} className="mx-auto mb-2 text-slate-300" />
-                    Aucune fiche d'affectation ne correspond à vos critères.
-                  </td>
-                </tr>
-              ) : (
-                filteredAssignments.map((assignment) => {
-                  const isActive = assignment.status === "Active";
-
-                  return (
-                    <tr key={assignment.id} className="hover:bg-slate-50/70 transition">
-                      
-                      {/* Reference */}
-                      <td className="py-3.5 px-4 font-mono font-bold text-indigo-700">
-                        <div className="flex items-center gap-1.5">
-                          <span>{assignment.reference}</span>
-                          {assignment.templateType === "DISTRA_SIM_SMARTPHONE" || assignment.resourceType ? (
-                            <span className="text-[10px] font-sans font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
-                              IT-02
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-
-                      {/* Beneficiary */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <User size={13} className="text-slate-400" />
-                          {assignment.beneficiaryName}
-                        </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          {assignment.beneficiaryCin ? `CIN/Mat: ${assignment.beneficiaryCin}` : assignment.beneficiaryEmail || assignment.beneficiaryPhone}
-                        </div>
-                      </td>
-
-                      {/* Dept & Job */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-800">{assignment.beneficiaryDepartment}</div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
-                          <span>{assignment.beneficiaryJobTitle}</span>
-                          {assignment.beneficiarySite && (
-                            <span className="text-[10px] text-slate-400 font-medium">• {assignment.beneficiarySite}</span>
-                          )}
-                        </div>
-                      </td>
-
-                      {/* Items */}
-                      <td className="py-3.5 px-4">
-                        {assignment.templateType === "DISTRA_SIM_SMARTPHONE" || assignment.resourceType ? (
-                          <div className="space-y-1">
-                            <div className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              <Layers size={11} className="text-emerald-600" />
-                              <span>{assignment.resourceType || "Carte SIM + SmartPhone"}</span>
-                            </div>
-                            {assignment.simPhoneNumber && (
-                              <div className="flex items-center gap-1.5 text-slate-700 text-[11px]">
-                                <Radio size={11} className="text-blue-600 shrink-0" />
-                                <span className="font-semibold text-slate-900">{assignment.simOperator || "SIM"}:</span>
-                                <span className="font-mono text-slate-600">{assignment.simPhoneNumber}</span>
-                              </div>
-                            )}
-                            {assignment.deviceBrand && (
-                              <div className="flex items-center gap-1.5 text-slate-700 text-[11px]">
-                                <Smartphone size={11} className="text-indigo-600 shrink-0" />
-                                <span className="font-semibold text-slate-900">{assignment.deviceBrand} {assignment.deviceModel}</span>
-                                {assignment.deviceImei && (
-                                  <span className="text-[10px] bg-slate-100 border border-slate-200 px-1 rounded font-mono text-slate-600">
-                                    {assignment.deviceImei}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {assignment.items.map((item, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5 text-slate-700">
-                                <Laptop size={12} className="text-indigo-500 shrink-0" />
-                                <span className="font-medium truncate max-w-[200px]">{item.name}</span>
-                                <span className="text-[10px] bg-slate-100 border border-slate-200 px-1 rounded-sm text-slate-600 font-mono">
-                                  {item.serialNumber}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Assigned Date */}
-                      <td className="py-3.5 px-4 text-slate-600 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <Calendar size={12} className="text-slate-400" />
-                          {new Date(assignment.assignedDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}
-                        </div>
-                      </td>
-
-                      {/* Status */}
-                      <td className="py-3.5 px-4">
-                        {isActive ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                            En Dotation
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            <CheckCircle2 size={11} className="text-slate-500" />
-                            Restitué
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Action Buttons */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-2">
-                          {isActive ? (
-                            <>
-                              {/* Single consultation & print / PDF export button */}
-                              <button
-                                onClick={() => handleOuvrirImpression(assignment)}
-                                title="Consulter la Fiche d'Affectation, Imprimer ou Télécharger en PDF"
-                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition border border-indigo-200 cursor-pointer shadow-2xs"
-                              >
-                                <FileCheck2 size={13} className="text-indigo-600" />
-                                <span>Fiche d'Affectation (PDF)</span>
-                              </button>
-
-                              {/* Return action button */}
-                              <button
-                                onClick={() => handleOpenReturnModal(assignment)}
-                                title="Enregistrer la Restitution / Retour du Matériel"
-                                className="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition border border-amber-200 cursor-pointer shadow-2xs"
-                              >
-                                <RotateCcw size={13} className="text-amber-600" />
-                                <span>Restituer</span>
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              {/* Single consultation & print / PDF discharge button */}
-                              <button
-                                onClick={() => setSelectedAssignmentForReturnPrint(assignment)}
-                                title="Consulter le Procès-Verbal de Décharge, Imprimer ou Télécharger en PDF"
-                                className="bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 transition border border-amber-200 cursor-pointer shadow-2xs"
-                              >
-                                <Printer size={13} className="text-amber-700" />
-                                <span>Décharge de Restitution (PDF)</span>
-                              </button>
-
-                              {/* Secondary view of initial assignment sheet */}
-                              <button
-                                onClick={() => handleOuvrirImpression(assignment)}
-                                title="Consulter la Fiche d'Affectation Initiale"
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1.5 rounded-lg text-xs flex items-center gap-1 transition border border-slate-300 cursor-pointer"
-                              >
-                                <Eye size={12} />
-                                <span className="text-[11px]">Fiche Initiale</span>
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* MODAL 1 : CRÉATION D'UNE NOUVELLE AFFECTATION DE MATÉRIEL                 */}
-      {/* ========================================================================= */}
+      {/* MODAL 1 : CRÉATION D'UNE NOUVELLE AFFECTATION */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 my-8 space-y-5">
-            
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2.5">
@@ -817,8 +526,13 @@ export default function MaterialAssignmentModule({
                   <FileCheck2 size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Nouvelle Fiche d'Affectation & Prise en Charge</h3>
-                  <p className="text-xs text-slate-500">Choisissez le modèle de décharge et renseignez les informations officielles</p>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Nouvelle Fiche d'Affectation & Prise en Charge
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Choisissez le modèle de décharge et renseignez les informations
+                    officielles
+                  </p>
                 </div>
               </div>
               <button
@@ -840,323 +554,92 @@ export default function MaterialAssignmentModule({
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <Smartphone size={15} className={assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" ? "text-indigo-600" : "text-slate-400"} />
-                <span>Décharge Carte SIM & Smartphone (Formulaire IT-02 - Distra)</span>
+                <span>
+                  Décharge Carte SIM & Smartphone (Formulaire IT-02 - Distra)
+                </span>
               </button>
               <button
                 type="button"
-                onClick={() => setAssignmentTemplateType("STANDARD_DSI_EQUIPMENT")}
+                onClick={() =>
+                  setAssignmentTemplateType("STANDARD_DSI_EQUIPMENT")
+                }
                 className={`py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition cursor-pointer ${
                   assignmentTemplateType === "STANDARD_DSI_EQUIPMENT"
                     ? "bg-white text-indigo-900 shadow-xs border border-indigo-200"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <Laptop size={15} className={assignmentTemplateType === "STANDARD_DSI_EQUIPMENT" ? "text-indigo-600" : "text-slate-400"} />
                 <span>Affectation Matériel IT Standard (DSI)</span>
               </button>
             </div>
 
             <form onSubmit={handleCreateAssignment} className="space-y-4">
-              
-              {/* Section 1 : Bénéficiaire */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                    <User size={13} className="text-indigo-600" /> Informations du Bénéficiaire
-                  </span>
-                  
-                  {/* Select from existing users shortcut */}
-                  {users.length > 0 && (
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <span>Remplir depuis :</span>
-                      <select
-                        onChange={(e) => handleSelectPredefinedUser(e.target.value)}
-                        className="text-xs font-semibold bg-white border border-slate-300 rounded px-2 py-1"
-                        defaultValue=""
-                      >
-                        <option value="" disabled>Sélectionner un collaborateur...</option>
-                        {users.map(u => (
-                          <option key={u.id} value={u.name}>{u.name} ({u.department})</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
+              <BeneficiarySection
+                formBeneficiaryName={formBeneficiaryName}
+                onNameChange={setFormBeneficiaryName}
+                formBeneficiaryCin={formBeneficiaryCin}
+                onCinChange={setFormBeneficiaryCin}
+                formBeneficiaryJob={formBeneficiaryJob}
+                onJobChange={setFormBeneficiaryJob}
+                formBeneficiaryDept={formBeneficiaryDept}
+                onDeptChange={setFormBeneficiaryDept}
+                formBeneficiarySite={formBeneficiarySite}
+                onSiteChange={setFormBeneficiarySite}
+                formAssignedDate={formAssignedDate}
+                onDateChange={setFormAssignedDate}
+                users={users}
+                onSelectUser={handleSelectPredefinedUser}
+              />
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Nom & Prénom *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Sarah Bennani"
-                      value={formBeneficiaryName}
-                      onChange={(e) => setFormBeneficiaryName(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">N° CIN / Matricule</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: BE892341"
-                      value={formBeneficiaryCin}
-                      onChange={(e) => setFormBeneficiaryCin(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Fonction / Poste *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Responsable Commercial / Tech"
-                      value={formBeneficiaryJob}
-                      onChange={(e) => setFormBeneficiaryJob(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-semibold"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Département *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: BU - Comm / DSI / Finance"
-                      value={formBeneficiaryDept}
-                      onChange={(e) => setFormBeneficiaryDept(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Site / Localisation *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Berrechid / Casablanca / Tanger"
-                      value={formBeneficiarySite}
-                      onChange={(e) => setFormBeneficiarySite(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Date d'Affectation *</label>
-                    <input
-                      type="date"
-                      required
-                      value={formAssignedDate}
-                      onChange={(e) => setFormAssignedDate(e.target.value)}
-                      className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Distra Specific Section */}
+              {/* Distra Template Sections */}
               {assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" && (
                 <div className="space-y-4">
-                  {/* Ressource assignée */}
-                  <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-200/80 space-y-3">
-                    <span className="text-xs font-bold text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
-                      <Layers size={13} className="text-emerald-700" /> Ressource Assignée (Formulaire IT-02)
-                    </span>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-                      {(["Carte SIM", "SmartPhone", "PC / Laptop", "Autre matériel IT", "Carte SIM + SmartPhone"] as AssignedResourceType[]).map((rType) => (
-                        <button
-                          key={rType}
-                          type="button"
-                          onClick={() => setFormResourceType(rType)}
-                          className={`py-2 px-2.5 rounded-lg border font-bold flex items-center justify-center gap-1.5 transition cursor-pointer text-[11px] ${
-                            formResourceType === rType
-                              ? "bg-emerald-700 text-white border-emerald-700 shadow-xs"
-                              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
-                          }`}
-                        >
-                          {formResourceType === rType ? <CheckSquare size={13} /> : <Square size={13} />}
-                          <span>{rType}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* SIM Card Details */}
-                  {(formResourceType === "Carte SIM" || formResourceType === "Carte SIM + SmartPhone") && (
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                        <Radio size={13} className="text-indigo-600" /> Informations Carte SIM
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Opérateur Télécom</label>
-                          <select
-                            value={formSimOperator}
-                            onChange={(e) => setFormSimOperator(e.target.value as TelecomOperator)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-bold"
-                          >
-                            <option value="IAM">IAM (Maroc Telecom)</option>
-                            <option value="INWI">INWI</option>
-                            <option value="ORANGE">ORANGE</option>
-                            <option value="AUTRE">AUTRE</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">N° de Téléphone</label>
-                          <input
-                            type="tel"
-                            placeholder="06 XX XX XX XX"
-                            value={formSimPhoneNumber}
-                            onChange={(e) => setFormSimPhoneNumber(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Code PUK</label>
-                          <input
-                            type="text"
-                            placeholder="Ex: 87462910"
-                            value={formSimPuk}
-                            onChange={(e) => setFormSimPuk(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Code PIN</label>
-                          <input
-                            type="text"
-                            placeholder="Ex: 0000"
-                            value={formSimPin}
-                            onChange={(e) => setFormSimPin(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                  <ResourceTypeSelector
+                    selected={formResourceType}
+                    onSelect={setFormResourceType}
+                  />
+                  {(formResourceType === "Carte SIM" ||
+                    formResourceType === "Carte SIM + SmartPhone") && (
+                    <SimDetailsSection
+                      simOperator={formSimOperator}
+                      onOperatorChange={setFormSimOperator}
+                      simPhoneNumber={formSimPhoneNumber}
+                      onPhoneNumberChange={setFormSimPhoneNumber}
+                      simPuk={formSimPuk}
+                      onPukChange={setFormSimPuk}
+                      simPin={formSimPin}
+                      onPinChange={setFormSimPin}
+                    />
                   )}
-
-                  {/* Hardware / Smartphone / PC Details */}
                   {formResourceType !== "Carte SIM" && (
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                        <Smartphone size={13} className="text-indigo-600" /> Informations Matériel (Appareil / PC)
-                      </span>
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Marque</label>
-                          <input
-                            type="text"
-                            placeholder="Ex: HP, Dell, Samsung, Lenovo"
-                            value={formDeviceBrand}
-                            onChange={(e) => setFormDeviceBrand(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-semibold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                            {formResourceType === "SmartPhone" ? "IMEI" : (formResourceType === "PC / Laptop" ? "N° Série / Service Tag" : "N° Série / IMEI")}
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="Ex: 356789104523120 ou 5CD..."
-                            value={formDeviceImei}
-                            onChange={(e) => setFormDeviceImei(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-mono font-bold text-indigo-700"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Modèle</label>
-                          <input
-                            type="text"
-                            placeholder="Ex: EliteBook 840 G8, Galaxy A54"
-                            value={formDeviceModel}
-                            onChange={(e) => setFormDeviceModel(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">Configuration</label>
-                          <input
-                            type="text"
-                            placeholder="Ex: i7 16GB 512GB SSD"
-                            value={formDeviceConfiguration}
-                            onChange={(e) => setFormDeviceConfiguration(e.target.value)}
-                            className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                    <SmartphoneDetailsSection
+                      resourceType={formResourceType}
+                      deviceBrand={formDeviceBrand}
+                      onBrandChange={setFormDeviceBrand}
+                      deviceImei={formDeviceImei}
+                      onImeiChange={setFormDeviceImei}
+                      deviceModel={formDeviceModel}
+                      onModelChange={setFormDeviceModel}
+                      deviceConfiguration={formDeviceConfiguration}
+                      onConfigurationChange={setFormDeviceConfiguration}
+                    />
                   )}
-
-                  {/* Operation Type, Restitution & Incidents */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Type d'opération</label>
-                      <div className="flex gap-2">
-                        {(["AFFECTATION", "RÉAFFECTATION"] as OperationType[]).map((op) => (
-                          <button
-                            key={op}
-                            type="button"
-                            onClick={() => setFormOperationType(op)}
-                            className={`flex-1 py-1.5 px-2 rounded-lg border font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 ${
-                              formOperationType === op
-                                ? "bg-indigo-600 text-white border-indigo-600"
-                                : "bg-white text-slate-600 border-slate-300"
-                            }`}
-                          >
-                            {formOperationType === op ? <CheckSquare size={11} /> : <Square size={11} />}
-                            <span>{op}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1.5">Restitution ancien appareil ?</label>
-                      <div className="flex gap-2">
-                        {(["OUI", "NON"] as ("OUI" | "NON")[]).map((val) => (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => {
-                              setFormRestitutionPreviousDevice(val);
-                              if (val === "NON") {
-                                setFormRestitatedDeviceCondition("Non applicable");
-                              }
-                            }}
-                            className={`flex-1 py-1.5 px-2 rounded-lg border font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1 ${
-                              formRestitutionPreviousDevice === val
-                                ? "bg-indigo-600 text-white border-indigo-600"
-                                : "bg-white text-slate-600 border-slate-300"
-                            }`}
-                          >
-                            {formRestitutionPreviousDevice === val ? <CheckSquare size={11} /> : <Square size={11} />}
-                            <span>{val}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">État de l'appareil restitué</label>
-                      <select
-                        value={formRestitutionPreviousDevice === "NON" ? "Non applicable" : formRestitatedDeviceCondition}
-                        disabled={formRestitutionPreviousDevice === "NON"}
-                        onChange={(e) => setFormRestitatedDeviceCondition(e.target.value as RestitutedDeviceCondition)}
-                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden disabled:bg-slate-100 disabled:text-slate-400"
-                      >
-                        <option value="Non applicable">Non applicable</option>
-                        <option value="Bon état">Bon état</option>
-                        <option value="Cassé mais opérationnel">Cassé mais opérationnel</option>
-                        <option value="Endommagé">Endommagé</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Incident Remarks */}
+                  <OperationSection
+                    operationType={formOperationType}
+                    onOperationTypeChange={setFormOperationType}
+                    restitutionPreviousDevice={formRestitutionPreviousDevice}
+                    onRestitutionPreviousDeviceChange={
+                      setFormRestitutionPreviousDevice
+                    }
+                    restitutedDeviceCondition={formRestitatedDeviceCondition}
+                    onRestitutedDeviceConditionChange={
+                      setFormRestitatedDeviceCondition
+                    }
+                  />
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Remarques / Motif particulier (Optionnel)</label>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Remarques / Motif particulier (Optionnel)
+                    </label>
                     <input
                       type="text"
                       value={formIncidentRemarks}
@@ -1168,444 +651,128 @@ export default function MaterialAssignmentModule({
                 </div>
               )}
 
-              {/* Standard IT Equipment Selection (If Standard mode is chosen) */}
+              {/* Standard IT Equipment Template */}
               {assignmentTemplateType === "STANDARD_DSI_EQUIPMENT" && (
                 <div className="space-y-4">
-                  {/* Stock IT Real-time Search & Multi-selection Component */}
-                  <div className="bg-slate-50/90 p-4 rounded-xl border border-slate-200 space-y-3.5 shadow-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
-                      <div>
-                        <span className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                          <Search size={14} className="text-indigo-600" />
-                          Sélection du matériel depuis le Stock IT
-                        </span>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Recherchez par nom, numéro de série, code asset, modèle ou caractéristiques pour affecter des équipements.
-                        </p>
-                      </div>
-                      <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-indigo-100 text-indigo-800 flex items-center gap-1">
-                        <PackageCheck size={13} />
-                        {selectedItemIds.length} matériel(s) sélectionné(s)
-                      </span>
-                    </div>
+                  <StockSelector
+                    selectedItems={selectedStockItems}
+                    selectedItemIds={selectedItemIds}
+                    onToggleItem={toggleStockItemSelection}
+                    onRemoveItem={removeStockItem}
+                    onClearAll={() => {
+                      setSelectedItemIds([]);
+                      setSelectedStockItems([]);
+                    }}
+                    itemConditionMap={itemConditionMap}
+                    onSetCondition={setItemCondition}
+                    itemAccessoriesMap={itemAccessoriesMap}
+                    onToggleAccessory={toggleAccessory}
+                  />
 
-                    {/* Search Input & Category Pills */}
-                    <div className="space-y-2.5">
-                      <div className="relative">
-                        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                          type="text"
-                          value={stockSearchQuery}
-                          onChange={(e) => setStockSearchQuery(e.target.value)}
-                          placeholder="Rechercher un équipement disponible (ex: HP EliteBook, Dell Latitude, STK-001, SN-..., i7, 16GB)..."
-                          className="w-full pl-9 pr-8 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-medium placeholder:text-slate-400"
-                        />
-                        {stockSearchQuery && (
-                          <button
-                            type="button"
-                            onClick={() => setStockSearchQuery("")}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
-                          >
-                            <X size={13} />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Category Pills Filter */}
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                        {[
-                          "Tous",
-                          "Laptops & Portables",
-                          "Postes Fixes & Écrans",
-                          "Périphériques & Accessoires",
-                          "Serveurs & Stockage",
-                          "Réseau & Sécurité"
-                        ].map((cat) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            onClick={() => setStockCategoryFilter(cat)}
-                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer text-xs flex items-center gap-1 ${
-                              stockCategoryFilter === cat
-                                ? "bg-indigo-600 text-white shadow-xs"
-                                : "bg-white text-slate-600 border border-slate-200 hover:border-slate-300 hover:bg-slate-100"
-                            }`}
-                          >
-                            {cat}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Autocomplete / Available Stock Results */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium px-1">
-                        <span>Équipements disponibles ({filteredAvailableStock.length})</span>
-                        {stockSearchQuery && <span>Filtre actif : « {stockSearchQuery} »</span>}
-                      </div>
-
-                      {availableStock.length === 0 ? (
-                        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-center gap-2">
-                          <AlertTriangle size={16} className="text-amber-600 shrink-0" />
-                          <span>Aucun matériel n'est actuellement disponible dans le stock IT.</span>
-                        </div>
-                      ) : filteredAvailableStock.length === 0 ? (
-                        <div className="p-3.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-500 text-center">
-                          Aucun équipement disponible ne correspond à votre recherche « <strong>{stockSearchQuery}</strong> ».
-                        </div>
-                      ) : (
-                        <div className="max-h-52 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-2 bg-white/90 shadow-inner">
-                          {filteredAvailableStock.map((item) => {
-                            const isSelected = selectedItemIds.includes(item.id);
-                            return (
-                              <div
-                                key={item.id}
-                                onClick={() => toggleStockItemSelection(item.id)}
-                                className={`p-2.5 rounded-lg border transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                                  isSelected
-                                    ? "bg-indigo-50/90 border-indigo-400 shadow-xs ring-1 ring-indigo-400"
-                                    : "bg-white border-slate-200 hover:border-indigo-300 hover:bg-slate-50/80"
-                                }`}
-                              >
-                                <div className="flex items-start sm:items-center gap-2.5 min-w-0">
-                                  <div className={`w-5 h-5 mt-0.5 sm:mt-0 rounded flex items-center justify-center border shrink-0 transition ${
-                                    isSelected ? "bg-indigo-600 text-white border-indigo-600" : "bg-white border-slate-300 text-transparent"
-                                  }`}>
-                                    <Check size={12} className="stroke-[3]" />
-                                  </div>
-                                  <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <h4 className="text-xs font-bold text-slate-900 truncate">{item.name}</h4>
-                                      <span className="text-[10px] px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded font-medium border border-slate-200">
-                                        {item.category}
-                                      </span>
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                                      <span>SN : <strong className="font-mono text-slate-800">{item.serialNumber || "—"}</strong></span>
-                                      <span>•</span>
-                                      <span>Asset : <strong className="font-mono text-indigo-700">{item.assetTag || item.id}</strong></span>
-                                      {item.specs?.cpu && (
-                                        <>
-                                          <span>•</span>
-                                          <span className="text-slate-600 font-medium">CPU : {item.specs.cpu}</span>
-                                        </>
-                                      )}
-                                      {item.specs?.ram && (
-                                        <>
-                                          <span>•</span>
-                                          <span className="text-slate-600 font-medium">RAM : {item.specs.ram}</span>
-                                        </>
-                                      )}
-                                      {item.specs?.storage && (
-                                        <>
-                                          <span>•</span>
-                                          <span className="text-slate-600 font-medium">SSD : {item.specs.storage}</span>
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
-                                    Dispo: {item.availableQty}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      toggleStockItemSelection(item.id);
-                                    }}
-                                    className={`text-[11px] font-bold px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
-                                      isSelected
-                                        ? "bg-indigo-600 text-white"
-                                        : "bg-slate-100 text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200"
-                                    }`}
-                                  >
-                                    {isSelected ? (
-                                      <>
-                                        <Check size={12} />
-                                        <span>Ajouté</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Plus size={12} />
-                                        <span>Ajouter</span>
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Selected Items Detail Container */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                        <Layers size={14} className="text-indigo-600" />
-                        Matériels IT Sélectionnés pour la Décharge ({selectedItemIds.length}) *
-                      </span>
-                      {selectedItemIds.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedItemIds([])}
-                          className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer flex items-center gap-1"
-                        >
-                          <Trash2 size={12} /> Tout désélectionner
-                        </button>
-                      )}
-                    </div>
-
-                    {selectedItemIds.length === 0 ? (
-                      <div className="p-4 bg-indigo-50/60 border border-dashed border-indigo-200 rounded-xl text-center space-y-1.5">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 mx-auto flex items-center justify-center">
-                          <Laptop size={16} />
-                        </div>
-                        <p className="text-xs font-bold text-slate-800">Aucun matériel sélectionné</p>
-                        <p className="text-[11px] text-slate-500 max-w-md mx-auto">
-                          Veuillez rechercher et cliquer sur un ou plusieurs équipements dans la liste du stock ci-dessus pour les inclure dans cette fiche de décharge.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2.5">
-                        {selectedItemIds.map((itemId, index) => {
-                          const item = stockItems.find(i => i.id === itemId);
-                          if (!item) return null;
-                          const currentCondition = itemConditionMap[itemId] || "Neuf / Excellent état";
-                          const currentAccessories = itemAccessoriesMap[itemId] || ["Chargeur secteur d'origine", "Câble d'alimentation"];
-
-                          return (
-                            <div
-                              key={itemId}
-                              className="bg-white p-3.5 rounded-xl border border-slate-300 shadow-xs space-y-3 transition hover:border-indigo-200"
-                            >
-                              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-2.5">
-                                <div className="flex items-center gap-2.5">
-                                  <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
-                                    {index + 1}
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center gap-2">
-                                      <h4 className="text-xs font-bold text-slate-900">{item.name}</h4>
-                                      <span className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold rounded-full border border-indigo-100">
-                                        {item.category}
-                                      </span>
-                                    </div>
-                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 font-mono">
-                                      <span>N° Série : <strong className="text-slate-800">{item.serialNumber || "—"}</strong></span>
-                                      <span>•</span>
-                                      <span>Asset : <strong className="text-indigo-600">{item.assetTag || item.id}</strong></span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => removeStockItem(itemId)}
-                                  className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
-                                  title="Retirer cet équipement"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                              </div>
-
-                              {/* Technical Specs & Condition Form */}
-                              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
-                                <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Processeur (CPU)</span>
-                                  <span className="font-semibold text-slate-900 text-xs">
-                                    {item.specs?.cpu || formEquipmentCpu || "Intel Core"}
-                                  </span>
-                                </div>
-                                <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Mémoire RAM</span>
-                                  <span className="font-semibold text-slate-900 text-xs">
-                                    {item.specs?.ram || `${formEquipmentRam} GB`}
-                                  </span>
-                                </div>
-                                <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Stockage (SSD/HDD)</span>
-                                  <span className="font-semibold text-slate-900 text-xs">
-                                    {item.specs?.storage || `${formEquipmentStorage} GB`}
-                                  </span>
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
-                                    État du matériel
-                                  </label>
-                                  <select
-                                    value={currentCondition}
-                                    onChange={(e) => setItemCondition(itemId, e.target.value as AssignedItemDetail["condition"])}
-                                    className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-semibold text-slate-800 focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                                  >
-                                    <option value="Neuf / Excellent état">Neuf / Excellent état</option>
-                                    <option value="Très bon état">Très bon état</option>
-                                    <option value="Bon état">Bon état d'usage</option>
-                                  </select>
-                                </div>
-                              </div>
-
-                              {/* Accessories per item */}
-                              <div className="space-y-1.5 pt-1">
-                                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
-                                  Accessoires & Éléments inclus pour ce matériel :
-                                </span>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {[
-                                    "Chargeur secteur d'origine",
-                                    "Câble d'alimentation",
-                                    "Sacoche de transport",
-                                    "Souris sans fil",
-                                    "Câble HDMI",
-                                    "Clavier USB",
-                                    "Adaptateur USB/RJ45",
-                                    "Hub USB-C",
-                                    "Cadenas de sécurité"
-                                  ].map((acc) => {
-                                    const isChecked = currentAccessories.includes(acc);
-                                    return (
-                                      <button
-                                        key={acc}
-                                        type="button"
-                                        onClick={() => toggleAccessory(itemId, acc)}
-                                        className={`text-[11px] px-2.5 py-1 rounded-md border font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                                          isChecked
-                                            ? "bg-indigo-50 text-indigo-800 border-indigo-300 font-bold"
-                                            : "bg-white text-slate-500 border-slate-200 hover:border-slate-300"
-                                        }`}
-                                      >
-                                        {isChecked ? <CheckSquare size={12} className="text-indigo-600" /> : <Square size={12} />}
-                                        <span>{acc}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Operation Type, Acquisition Date, and General Complements */}
+                  {/* Operation + complements */}
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3.5">
                     <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                      <SlidersHorizontal size={13} className="text-indigo-600" /> Options de la Fiche IT-01
+                      <SlidersHorizontal
+                        size={13}
+                        className="text-indigo-600"
+                      />{" "}
+                      Options de la Fiche IT-01
                     </span>
-
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Date d'Acquisition Matériel</label>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Date d'Acquisition Matériel
+                        </label>
                         <input
                           type="date"
                           value={formEquipmentAcquisitionDate}
-                          onChange={(e) => setFormEquipmentAcquisitionDate(e.target.value)}
+                          onChange={(e) =>
+                            setFormEquipmentAcquisitionDate(e.target.value)
+                          }
                           className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
                         />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">Type d'opération</label>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Type d'opération
+                        </label>
                         <div className="flex gap-2">
-                          {(["AFFECTATION", "RÉAFFECTATION"] as OperationType[]).map((op) => (
-                            <button
-                              key={op}
-                              type="button"
-                              onClick={() => setFormOperationType(op)}
-                              className={`flex-1 py-2 px-2 rounded-lg border font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                                formOperationType === op
-                                  ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                                  : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"
-                              }`}
-                            >
-                              {formOperationType === op ? <CheckSquare size={13} /> : <Square size={13} />}
-                              <span>{op}</span>
-                            </button>
-                          ))}
+                          {(["AFFECTATION", "RÉAFFECTATION"] as OperationType[]).map(
+                            (op) => (
+                              <button
+                                key={op}
+                                type="button"
+                                onClick={() => setFormOperationType(op)}
+                                className={`flex-1 py-2 px-2 rounded-lg border font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                                  formOperationType === op
+                                    ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                                    : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"
+                                }`}
+                              >
+                                {formOperationType === op ? (
+                                  <CheckSquare size={13} />
+                                ) : (
+                                  <Square size={13} />
+                                )}
+                                <span>{op}</span>
+                              </button>
+                            )
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* Global Complements */}
                     <div className="space-y-2 pt-1 border-t border-slate-200">
                       <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider block">
                         Compléments Fournis (Case à cocher sur la fiche) :
                       </span>
                       <div className="grid grid-cols-3 gap-2 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => setFormHasKeyboard(!formHasKeyboard)}
-                          className={`py-2 px-3 rounded-lg border font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            formHasKeyboard
-                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
-                          }`}
-                        >
-                          {formHasKeyboard ? <CheckSquare size={13} /> : <Square size={13} />}
-                          <span>Clavier</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFormHasMouse(!formHasMouse)}
-                          className={`py-2 px-3 rounded-lg border font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            formHasMouse
-                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
-                          }`}
-                        >
-                          {formHasMouse ? <CheckSquare size={13} /> : <Square size={13} />}
-                          <span>Souris</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFormHasUsbAdapter(!formHasUsbAdapter)}
-                          className={`py-2 px-3 rounded-lg border font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                            formHasUsbAdapter
-                              ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                              : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
-                          }`}
-                        >
-                          {formHasUsbAdapter ? <CheckSquare size={13} /> : <Square size={13} />}
-                          <span>Adaptateur USB/RJ45</span>
-                        </button>
+                        {[
+                          {
+                            label: "Clavier",
+                            value: formHasKeyboard,
+                            setter: setFormHasKeyboard,
+                          },
+                          {
+                            label: "Souris",
+                            value: formHasMouse,
+                            setter: setFormHasMouse,
+                          },
+                          {
+                            label: "Adaptateur USB/RJ45",
+                            value: formHasUsbAdapter,
+                            setter: setFormHasUsbAdapter,
+                          },
+                        ].map((item) => (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => item.setter(!item.value)}
+                            className={`py-2 px-3 rounded-lg border font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
+                              item.value
+                                ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                                : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                            }`}
+                          >
+                            {item.value ? (
+                              <CheckSquare size={13} />
+                            ) : (
+                              <Square size={13} />
+                            )}
+                            <span>{item.label}</span>
+                          </button>
+                        ))}
                       </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* DSI & Validation */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Émetteur / Responsable DSI</label>
-                  <input
-                    type="text"
-                    required
-                    value={formAuthorizedBy}
-                    onChange={(e) => setFormAuthorizedBy(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-semibold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Entité Émettrice</label>
-                  <input
-                    type="text"
-                    required
-                    value={formDsiTitle}
-                    onChange={(e) => setFormDsiTitle(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-                  />
-                </div>
-              </div>
-
               {/* Notes */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Notes Complémentaires</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Notes Complémentaires
+                </label>
                 <input
                   type="text"
                   placeholder="Ex: Matériel configuré pour dotation entreprise."
@@ -1626,25 +793,123 @@ export default function MaterialAssignmentModule({
                 </button>
                 <button
                   type="submit"
-                  disabled={loadingAction || (!formBeneficiaryName)}
+                  disabled={loadingAction || !formBeneficiaryName}
                   className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-5 py-2.5 rounded-lg flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                 >
                   <FileCheck2 size={14} />
-                  Générer & Afficher la Fiche
+                  {reassignAfterId ? "Réaffecter" : "Générer & Afficher la Fiche"}
                 </button>
               </div>
             </form>
+
+            {/* Confirmation summary overlay */}
+            {showConfirmSummary && (
+              <div className="absolute inset-0 bg-white/95 backdrop-blur-xs z-10 rounded-2xl flex flex-col p-6 overflow-y-auto">
+                <h4 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
+                  <FileCheck2 size={16} className="text-indigo-600" />
+                  Récapitulatif avant soumission
+                </h4>
+
+                <div className="space-y-3 text-xs flex-1">
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                    <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Bénéficiaire</span>
+                    <p className="text-slate-900 font-semibold mt-0.5">{formBeneficiaryName || "—"}</p>
+                    <p className="text-slate-500">{formBeneficiaryDept || "—"} · {formBeneficiarySite || "—"}</p>
+                  </div>
+
+                  {assignmentTemplateType === "DISTRA_SIM_SMARTPHONE" && (
+                    <>
+                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                        <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Type de ressource</span>
+                        <p className="text-slate-900 font-semibold mt-0.5">{formResourceType || "—"}</p>
+                      </div>
+                      {formResourceType !== "Carte SIM" && (
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                          <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Smartphone</span>
+                          <p className="text-slate-900 font-semibold mt-0.5">
+                            {formDeviceBrand || "—"} {formDeviceModel || "—"}
+                          </p>
+                          {formDeviceImei && (
+                            <p className="text-slate-500">IMEI: {formDeviceImei}</p>
+                          )}
+                        </div>
+                      )}
+                      {formResourceType !== "SmartPhone" && (
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                          <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Carte SIM</span>
+                          <p className="text-slate-900 font-semibold mt-0.5">
+                            {formSimOperator || "—"} · {formSimPhoneNumber || "—"}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {assignmentTemplateType === "STANDARD_DSI_EQUIPMENT" && (
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Équipements sélectionnés</span>
+                      {selectedStockItems.length > 0 ? (
+                        <ul className="mt-1 space-y-0.5">
+                          {selectedStockItems.map((item) => (
+                            <li key={item.id} className="text-slate-700 font-medium">
+                              {item.name} — {item.serialNumber || item.assetTag || item.id}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-slate-400 italic">Aucun équipement sélectionné</p>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Opération</span>
+                      <p className="text-slate-900 font-semibold mt-0.5">{formOperationType || "—"}</p>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Date</span>
+                      <p className="text-slate-900 font-semibold mt-0.5">{formAssignedDate || "—"}</p>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Émetteur DSI</span>
+                      <p className="text-slate-900 font-semibold mt-0.5">{formAuthorizedBy || "—"}</p>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-500 uppercase text-[10px] tracking-wider">Entité</span>
+                      <p className="text-slate-900 font-semibold mt-0.5">{formDsiTitle || "—"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-4 mt-4 border-t border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmSummary(false)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                  >
+                    Retour
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmSubmitAssignment}
+                    disabled={loadingAction}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold px-5 py-2.5 rounded-lg flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <FileCheck2 size={14} />
+                    Confirmer l'affectation
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 2 : ENREGISTREMENT D'UN RETOUR / RESTITUTION DE MATÉRIEL            */}
-      {/* ========================================================================= */}
+      {/* MODAL 2 : RESTITUTION */}
       {selectedAssignmentForReturn && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 my-8 space-y-5">
-            
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2.5">
@@ -1652,9 +917,12 @@ export default function MaterialAssignmentModule({
                   <RotateCcw size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Procédure de Restitution & Décharge de Matériel</h3>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Procédure de Restitution & Décharge de Matériel
+                  </h3>
                   <p className="text-xs text-slate-500">
-                    Fiche {selectedAssignmentForReturn.reference} • Bénéficiaire : <strong>{selectedAssignmentForReturn.beneficiaryName}</strong>
+                    Fiche {selectedAssignmentForReturn.reference} • Bénéficiaire :{" "}
+                    <strong>{selectedAssignmentForReturn.beneficiaryName}</strong>
                   </p>
                 </div>
               </div>
@@ -1667,18 +935,24 @@ export default function MaterialAssignmentModule({
             </div>
 
             <form onSubmit={handleSubmitReturn} className="space-y-4">
-              
-              {/* Matériels concernés */}
+              {/* Items to return */}
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Équipements à Restituer :</span>
+                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                  Équipements à Restituer :
+                </span>
                 <div className="space-y-1.5">
                   {selectedAssignmentForReturn.items.map((it, idx) => (
-                    <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
+                    <div
+                      key={idx}
+                      className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between text-xs"
+                    >
                       <div className="flex items-center gap-2">
-                        <Laptop size={14} className="text-indigo-600" />
+                        <FileCheck2 size={14} className="text-indigo-600" />
                         <div>
                           <strong className="text-slate-900">{it.name}</strong>
-                          <div className="text-[10px] text-slate-500 font-mono">SN: {it.serialNumber} • Asset: {it.assetTag}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            SN: {it.serialNumber} • Asset: {it.assetTag}
+                          </div>
                         </div>
                       </div>
                       <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-medium">
@@ -1689,10 +963,12 @@ export default function MaterialAssignmentModule({
                 </div>
               </div>
 
-              {/* Date & Cause de retour */}
+              {/* Date & Cause */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Date de Restitution Réelle *</label>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Date de Restitution Réelle *
+                  </label>
                   <input
                     type="date"
                     required
@@ -1702,29 +978,49 @@ export default function MaterialAssignmentModule({
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Motif / Cause de Retour *</label>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Motif / Cause de Retour *
+                  </label>
                   <select
                     value={returnCause}
-                    onChange={(e) => setReturnCause(e.target.value as ReturnCause)}
+                    onChange={(e) =>
+                      setReturnCause(e.target.value as ReturnCause)
+                    }
                     className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-medium"
                   >
-                    <option value="Départ collaborateur (Fin de contrat / Démission)">Départ collaborateur (Fin de contrat / Démission)</option>
-                    <option value="Renouvellement matériel / Upgrade">Renouvellement matériel / Upgrade</option>
-                    <option value="Matériel défectueux / En panne">Matériel défectueux / En panne</option>
-                    <option value="Changement de poste / Mutation interne">Changement de poste / Mutation interne</option>
-                    <option value="Fin de mission / Projet temporaire">Fin de mission / Projet temporaire</option>
+                    <option value="Départ collaborateur (Fin de contrat / Démission)">
+                      Départ collaborateur (Fin de contrat / Démission)
+                    </option>
+                    <option value="Renouvellement matériel / Upgrade">
+                      Renouvellement matériel / Upgrade
+                    </option>
+                    <option value="Matériel défectueux / En panne">
+                      Matériel défectueux / En panne
+                    </option>
+                    <option value="Changement de poste / Mutation interne">
+                      Changement de poste / Mutation interne
+                    </option>
+                    <option value="Fin de mission / Projet temporaire">
+                      Fin de mission / Projet temporaire
+                    </option>
                     <option value="Autre motif">Autre motif</option>
                   </select>
                 </div>
               </div>
 
-              {/* État du matériel */}
+              {/* Equipment condition */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">État Physique & Fonctionnel Constaté *</label>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    État Physique & Fonctionnel Constaté *
+                  </label>
                   <select
                     value={equipmentCondition}
-                    onChange={(e) => setEquipmentCondition(e.target.value as EquipmentReturnCondition)}
+                    onChange={(e) =>
+                      setEquipmentCondition(
+                        e.target.value as EquipmentReturnCondition
+                      )
+                    }
                     className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-bold text-slate-800"
                   >
                     <option value="Bon état">Bon état</option>
@@ -1734,22 +1030,36 @@ export default function MaterialAssignmentModule({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Action Technique Décidée (DSI) *</label>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    Action Technique Décidée (DSI) *
+                  </label>
                   <select
                     value={actionTaken}
-                    onChange={(e) => setActionTaken(e.target.value as MaterialReturnRecord["actionTaken"])}
+                    onChange={(e) =>
+                      setActionTaken(
+                        e.target.value as MaterialReturnRecord["actionTaken"]
+                      )
+                    }
                     className="w-full text-xs px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-hidden font-bold text-indigo-700"
                   >
-                    <option value="Remise en stock disponible">Remise en stock disponible (Prêt pour dotation)</option>
-                    <option value="Envoi en maintenance / SAV">Envoi en maintenance / SAV Réparation</option>
-                    <option value="Mise au rebut">Mise au rebut / Déclassement définitif</option>
+                    <option value="Remise en stock disponible">
+                      Remise en stock disponible (Prêt pour dotation)
+                    </option>
+                    <option value="Envoi en maintenance / SAV">
+                      Envoi en maintenance / SAV Réparation
+                    </option>
+                    <option value="Mise au rebut">
+                      Mise au rebut / Déclassement définitif
+                    </option>
                   </select>
                 </div>
               </div>
 
-              {/* Accessoires restitués */}
+              {/* Accessories */}
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Contrôle des Accessoires Remis :</span>
+                <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                  Contrôle des Accessoires Remis :
+                </span>
                 <div className="flex flex-wrap gap-2">
                   {[
                     "Chargeur secteur d'origine",
@@ -1758,7 +1068,7 @@ export default function MaterialAssignmentModule({
                     "Souris sans fil",
                     "Adaptateur / Hub USB-C",
                     "Câble HDMI 4K",
-                    "Cadenas de sécurité"
+                    "Cadenas de sécurité",
                   ].map((acc, i) => {
                     const isChecked = accessoriesReturned.includes(acc);
                     return (
@@ -1767,9 +1077,11 @@ export default function MaterialAssignmentModule({
                         type="button"
                         onClick={() => {
                           if (isChecked) {
-                            setAccessoriesReturned(prev => prev.filter(a => a !== acc));
+                            setAccessoriesReturned((prev) =>
+                              prev.filter((a) => a !== acc)
+                            );
                           } else {
-                            setAccessoriesReturned(prev => [...prev, acc]);
+                            setAccessoriesReturned((prev) => [...prev, acc]);
                           }
                         }}
                         className={`text-xs px-2.5 py-1 rounded-md border font-medium transition cursor-pointer flex items-center gap-1.5 ${
@@ -1778,7 +1090,11 @@ export default function MaterialAssignmentModule({
                             : "bg-white text-slate-400 border-slate-200 line-through"
                         }`}
                       >
-                        {isChecked ? <CheckSquare size={12} className="text-emerald-600" /> : <Square size={12} />}
+                        {isChecked ? (
+                          <CheckSquare size={12} className="text-emerald-600" />
+                        ) : (
+                          <Square size={12} />
+                        )}
                         {acc}
                       </button>
                     );
@@ -1786,10 +1102,11 @@ export default function MaterialAssignmentModule({
                 </div>
               </div>
 
-              {/* Checklist Sécurité IT */}
+              {/* Security checklist */}
               <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
                 <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wider flex items-center gap-1">
-                  <ShieldCheck size={13} className="text-indigo-600" /> Checklist Sécurité & Conformité Informatique
+                  <CheckSquare size={13} className="text-indigo-600" />{" "}
+                  Checklist Sécurité & Conformité Informatique
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <label className="flex items-center gap-2 cursor-pointer bg-white p-2 rounded-lg border border-indigo-100">
@@ -1799,7 +1116,9 @@ export default function MaterialAssignmentModule({
                       onChange={(e) => setDataWiped(e.target.checked)}
                       className="rounded text-indigo-600"
                     />
-                    <span className="text-slate-800 font-semibold">Données effacées / Reset Usine</span>
+                    <span className="text-slate-800 font-semibold">
+                      Données effacées / Reset Usine
+                    </span>
                   </label>
                   <label className="flex items-center gap-2 cursor-pointer bg-white p-2 rounded-lg border border-indigo-100">
                     <input
@@ -1808,14 +1127,18 @@ export default function MaterialAssignmentModule({
                       onChange={(e) => setBitlockerUnlocked(e.target.checked)}
                       className="rounded text-indigo-600"
                     />
-                    <span className="text-slate-800 font-semibold">Comptes & BitLocker déconnectés</span>
+                    <span className="text-slate-800 font-semibold">
+                      Comptes & BitLocker déconnectés
+                    </span>
                   </label>
                 </div>
               </div>
 
-              {/* Diagnostic technique */}
+              {/* Diagnosis */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Diagnostic Technique & Remarques DSI</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Diagnostic Technique & Remarques DSI
+                </label>
                 <textarea
                   rows={2}
                   value={technicalDiagnosis}
@@ -1824,9 +1147,11 @@ export default function MaterialAssignmentModule({
                 />
               </div>
 
-              {/* Inspected By */}
+              {/* Inspected by */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">Inspecté et Validé par</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  Inspecté et Validé par
+                </label>
                 <input
                   type="text"
                   required
@@ -1859,8 +1184,7 @@ export default function MaterialAssignmentModule({
         </div>
       )}
 
-
-      {/* MODAL 3 : fiche d'affectation imprimable (extraite vers components/affectations/FicheImpressionAffectation.tsx) */}
+      {/* MODAL 3 : fiche d'affectation imprimable */}
       {selectedAssignmentForPrint && (
         <FicheImpressionAffectation
           assignment={selectedAssignmentForPrint}
@@ -1868,14 +1192,14 @@ export default function MaterialAssignmentModule({
         />
       )}
 
-      {/* MODAL 4 : decharge & restitution imprimable (extraite vers components/affectations/FicheImpressionRestitution.tsx) */}
-      {selectedAssignmentForReturnPrint && selectedAssignmentForReturnPrint.returnRecord && (
-        <FicheImpressionRestitution
-          assignment={selectedAssignmentForReturnPrint}
-          onFermer={() => setSelectedAssignmentForReturnPrint(null)}
-        />
-      )}
-
+      {/* MODAL 4 : décharge & restitution imprimable */}
+      {selectedAssignmentForReturnPrint &&
+        selectedAssignmentForReturnPrint.returnRecord && (
+          <FicheImpressionRestitution
+            assignment={selectedAssignmentForReturnPrint}
+            onFermer={() => setSelectedAssignmentForReturnPrint(null)}
+          />
+        )}
     </div>
   );
 }

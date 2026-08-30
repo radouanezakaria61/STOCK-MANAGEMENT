@@ -91,47 +91,48 @@ interface FiltresRecherche {
   q?: string;
   category?: string;
   availableOnly?: boolean;
+  page?: number;
+  limite?: number;
 }
 
 export async function rechercherStock(filtres: FiltresRecherche) {
   const q = (filtres.q || "").toLowerCase().trim();
   const category = filtres.category || "";
   const availableOnly = filtres.availableOnly === true;
+  const { page, limite, skip, take } = bornerPagination({
+    page: filtres.page,
+    limite: filtres.limite,
+  });
 
   const where: Prisma.ArticleStockWhereInput = {};
   if (availableOnly) where.availableQty = { gt: 0 };
   if (category && category !== "Tous") where.category = category;
 
-  // Recherche poussée en base (insensible à la casse, `contains`) au lieu
-  // d'un findMany complet suivi d'un filtre JS : le coût devient proportionnel
-  // aux résultats et non à toute la table (qui ne fait que croître — l'historique
-  // ne se supprime pas). Les champs specs JSON restent filtrés côté service,
-  // mais seulement sur les lignes déjà réduites par les autres critères.
   if (q) {
     const champTexte = { contains: q, mode: "insensitive" as const };
-
-    // Recherche SQL insensible à la casse sur les champs texte ET dans les
-    // clés JSON specs (cpu/ram/storage) via les opérateurs JSON natifs de
-    // PostgreSQL — plus aucun findMany complet suivi d'un filtre JS.
-    return prisma.articleStock.findMany({
-      where: {
-        ...where,
-        OR: [
-          { name: champTexte },
-          { brand: champTexte },
-          { model: champTexte },
-          { serialNumber: champTexte },
-          { assetTag: champTexte },
-          { category: champTexte },
-          { specs: { path: ["cpu"], string_contains: q } },
-          { specs: { path: ["ram"], string_contains: q } },
-          { specs: { path: ["storage"], string_contains: q } }
-        ]
-      }
-    });
+    where.OR = [
+      { name: champTexte },
+      { brand: champTexte },
+      { model: champTexte },
+      { serialNumber: champTexte },
+      { assetTag: champTexte },
+      { category: champTexte },
+      { specs: { path: ["cpu"], string_contains: q } },
+      { specs: { path: ["ram"], string_contains: q } },
+      { specs: { path: ["storage"], string_contains: q } }
+    ];
   }
 
-  return prisma.articleStock.findMany({ where });
+  const [total, items] = await Promise.all([
+    prisma.articleStock.count({ where }),
+    prisma.articleStock.findMany({
+      where,
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      skip,
+      take
+    })
+  ]);
+  return { items, pagination: metaPagination(page, limite, total) };
 }
 
 function instantaneArticle(a: ArticleStock): Record<string, unknown> {

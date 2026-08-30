@@ -16,3 +16,6 @@ frontend/dist/
 
 # Sauvegardes de base de données
 _sauvegardes/
+
+# Runtime uploads
+backend/uploads/

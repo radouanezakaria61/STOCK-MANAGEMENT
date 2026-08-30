@@ -363,7 +363,9 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
       });
     }
 
-    const nouvelleFiche = await tx.affectation.create({
+    let nouvelleFiche;
+    try {
+      nouvelleFiche = await tx.affectation.create({
       data: {
         reference,
         templateType:
@@ -395,7 +397,7 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
         hasSmartphone:
           hasSmartphone === true || Boolean(resourceType?.includes("SmartPhone")),
         deviceBrand: deviceBrand || lignesConstruites[0]?.brand || "",
-        deviceImei: deviceImei || lignesConstruites[0]?.serialNumber || "",
+        deviceImei: deviceImei || "",
         deviceModel: deviceModel || lignesConstruites[0]?.model || "",
         deviceConfiguration: deviceConfiguration || "",
         operationType: operationType || "AFFECTATION",
@@ -422,7 +424,18 @@ export async function creerAffectation(data: EntreeAffectation, acteur?: Context
         }
       },
       include: { items: { orderBy: { id: "asc" } }, returnRecord: true }
-    });
+      });
+    } catch (erreur) {
+      if (
+        erreur instanceof Prisma.PrismaClientKnownRequestError &&
+        erreur.code === "P2002"
+      ) {
+        throw dejaAffecte(
+          "Un IMEI identique est déjà enregistré sur une autre fiche d'affectation."
+        );
+      }
+      throw erreur;
+    }
 
     // Audit DANS la transaction (AGENTS.md règle 2) : un échec d'audit
     // annule l'affectation entière.

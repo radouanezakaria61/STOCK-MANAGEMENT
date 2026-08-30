@@ -11,6 +11,7 @@ const UserManagement = lazy(() => import("./components/UserManagement"));
 const ITStockManagement = lazy(() => import("./components/ITStockManagement"));
 const MaterialAssignmentModule = lazy(() => import("./components/MaterialAssignmentModule"));
 const JournalAuditModule = lazy(() => import("./components/JournalAuditModule"));
+const ChatModule = lazy(() => import("./components/ChatModule"));
 // LoginPage et ChangePasswordModal restent dans le chunk principal : ils
 // s'affichent avant toute donnée et doivent être instantanés.
 import LoginPage from "./components/LoginPage";
@@ -31,7 +32,9 @@ import {
   Calendar,
   Building2,
   LogOut,
-  ScrollText
+  ScrollText,
+  MessageSquare,
+  Menu
 } from "lucide-react";
 
 // Adapte le profil d'authentification (/api/auth/me) au format AppUser
@@ -59,6 +62,7 @@ function versAppUser(p: ProfilUtilisateur): AppUser {
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Authentification réelle (chantier 2b) : la session vit dans un cookie
   // HttpOnly ; le frontend ne fait que refléter ce que dit le serveur.
@@ -72,6 +76,7 @@ export default function App() {
   const [stockItems, setStockItems] = useState<ITStockItem[]>([]);
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
   const [assignments, setAssignments] = useState<MaterialAssignment[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
   // Flux de notifications — données SERVEUR (chantier 3) : alertes stock,
   // maintenance, matériel endommagé… persistées et dédupliquées côté API.
@@ -130,6 +135,23 @@ export default function App() {
     const interval = setInterval(chargerNotifications, 30_000);
     return () => clearInterval(interval);
   }, [profil, chargerNotifications]);
+
+  // Compteur de messages non-lus (chat) — poll toutes les 15 s.
+  useEffect(() => {
+    if (!profil) return;
+    const fetchUnread = async () => {
+      try {
+        const res = await apiFetch("/api/chat/unread-count");
+        if (res.ok) {
+          const json = await res.json();
+          setUnreadChatCount(json.data?.count ?? 0);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 15_000);
+    return () => clearInterval(interval);
+  }, [profil]);
 
   const marquerLue = async (id: string) => {
     if (id.startsWith("local-")) {
@@ -299,8 +321,16 @@ export default function App() {
         />
       )}
       
+      {/* Mobile sidebar backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* PANneau LATÉRAL DE NAVIGATION REPLIABLE */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0">
+      <aside className={`${sidebarOpen ? "block" : "hidden"} md:block w-full md:w-64 bg-slate-900 text-slate-100 flex flex-col border-r border-slate-800 shrink-0 fixed md:static inset-0 z-40 md:z-auto`}>
         
         {/* En-tête de marque */}
         <div className="p-5 border-b border-slate-800 flex items-center gap-3">
@@ -323,6 +353,7 @@ export default function App() {
             { id: "assignments", label: "Affectations & Décharges", icon: FileCheck2 },
             { id: "societes", label: "Sociétés", icon: Building2 },
             { id: "users", label: "Utilisateurs & Rôles", icon: Shield },
+            { id: "chat", label: "Messagerie", icon: MessageSquare },
             ...(profil.permissions.includes("audit.consulter")
               ? [{ id: "audit", label: "Journal d'Audit", icon: ScrollText }]
               : []),
@@ -332,7 +363,7 @@ export default function App() {
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => { setActiveTab(tab.id); setSidebarOpen(false); }}
                 className={`w-full text-left text-xs px-3.5 py-2.5 rounded-lg flex items-center justify-between transition cursor-pointer ${
                   isActive
                     ? "bg-indigo-600 text-white font-semibold shadow-xs"
@@ -361,6 +392,11 @@ export default function App() {
                 {tab.id === "users" && users.length > 0 && (
                   <span className="text-[10px] bg-slate-800 text-purple-300 px-1.5 py-0.2 rounded-md font-bold">
                     {users.length}
+                  </span>
+                )}
+                {tab.id === "chat" && unreadChatCount > 0 && (
+                  <span className="text-[10px] bg-red-600 text-white px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center">
+                    {unreadChatCount}
                   </span>
                 )}
               </button>
@@ -392,20 +428,30 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         
         {/* BARRE D'ÉTAT SUPÉRIEURE AVEC NOTIFICATIONS & SÉLECTEUR DE SESSION */}
-        <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 relative z-30">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900 uppercase">
-              {
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shrink-0 relative z-30">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="md:hidden text-slate-600 hover:text-slate-900 p-1 rounded-lg hover:bg-slate-100"
+            >
+              <Menu size={20} />
+            </button>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900 uppercase">
                 {
-                  dashboard: "Vue d'Ensemble du Parc Informatique",
-                  stock: "Gestion du Stock IT, Actifs & Dotations Collaborateurs",
-                  assignments: "Affectations, Décharges & Restitutions de Matériel (DSI)",
-                  societes: "Référentiel des Sociétés du Groupe",
-                  users: "Gestion des Utilisateurs, Rôles & Habilitations (RBAC)",
-                  audit: "Journal d'Audit — Traçabilité & Immuabilité",
-                }[activeTab]
+                  {
+                    dashboard: "Vue d'Ensemble du Parc Informatique",
+                    stock: "Gestion du Stock IT, Actifs & Dotations Collaborateurs",
+                    assignments: "Affectations, Décharges & Restitutions de Matériel (DSI)",
+                    societes: "Référentiel des Sociétés du Groupe",
+                    users: "Gestion des Utilisateurs, Rôles & Habilitations (RBAC)",
+                    audit: "Journal d'Audit — Traçabilité & Immuabilité",
+                    chat: "Messagerie Interne",
+                  }[activeTab]
               }
             </h2>
+            </div>
           </div>
           <div className="flex items-center flex-wrap gap-3 text-xs font-semibold text-slate-500">
             
@@ -580,7 +626,7 @@ export default function App() {
         </header>
 
         {/* ESPACE DE TRAVAIL CENTRAL */}
-        <div className="p-6 max-w-7xl w-full mx-auto">
+        <div className="p-4 sm:p-6 max-w-7xl w-full mx-auto">
           {loading ? (
             <div className="h-64 flex flex-col items-center justify-center text-center space-y-3">
               <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
@@ -651,6 +697,9 @@ export default function App() {
               )}
               {activeTab === "audit" && profil.permissions.includes("audit.consulter") && (
                 <JournalAuditModule permissions={profil.permissions} />
+              )}
+              {activeTab === "chat" && currentUser && (
+                <ChatModule currentUser={currentUser} />
               )}
               </Suspense>
             </div>

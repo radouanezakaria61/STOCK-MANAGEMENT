@@ -95,6 +95,11 @@ model Utilisateur {
   auditsJournal JournalAudit[]
   notifications Notification[]
 
+  // Messagerie interne
+  conversationsCrees           Conversation[]
+  conversationsParticipation   ConversationParticipant[]
+  messagesEcrits               Message[]
+
   @@index([societeId])
   @@index([roleId])
   @@map("utilisateurs")
@@ -419,4 +424,85 @@ model RetourAffectation {
   affectation Affectation @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
   @@map("retours_affectation")
+}
+
+// ──────────────────────── MESSAGERIE INTERNE ──────────────────────────
+// MVP poll-based : pas de WebSocket. Les clients interrogent périodiquement
+// GET /api/conversations/:id/messages?after=<timestamp> pour récupérer les
+// nouveaux messages.
+
+model Conversation {
+  id          String   @id @default(uuid())
+  reference   String   @unique
+  titre       String?
+  creeParId   String   @map("cree_par_id")
+  creeLe      DateTime @default(now()) @map("cree_le")
+  modifieLe   DateTime @updatedAt @map("modifie_le")
+  supprimeLe  DateTime?
+
+  creePar     Utilisateur            @relation(fields: [creeParId], references: [id], onDelete: Restrict)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([creeParId])
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id              String      @id @default(uuid())
+  conversationId  String      @map("conversation_id")
+  utilisateurId   String      @map("utilisateur_id")
+  role            String      @default("MEMBRE") // CREATEUR | MEMBRE
+  aRejointLe      DateTime    @default(now()) @map("a_rejoint_le")
+  aQuitteLe       DateTime?   @map("a_quitte_le")
+  dernièreVuLe   DateTime?   @map("derniere_vu_le")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  utilisateur  Utilisateur  @relation(fields: [utilisateurId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, utilisateurId])
+  @@index([utilisateurId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  conversationId  String   @map("conversation_id")
+  auteurId        String   @map("auteur_id")
+  contenu         String
+  type            String   @default("TEXTE") // TEXTE | IMAGE | SYSTEME
+  fichierUrl      String?  @map("fichier_url")
+  fichierType     String?  @map("fichier_type")
+  modifieLe       DateTime @updatedAt @map("modifie_le")
+  supprimeLe      DateTime?
+  creeLe          DateTime @default(now()) @map("cree_le")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  auteur       Utilisateur  @relation(fields: [auteurId], references: [id], onDelete: Restrict)
+  piecesJointes PieceJointe[]
+
+  @@index([conversationId, creeLe])
+  @@index([auteurId])
+  @@map("messages")
+}
+
+// Pièces jointes chiffrées — stockage sécurisé (Phase 7).
+// Le nom de fichier stocké est un UUID aléatoire : aucun chemin contrôlé par
+// l'utilisateur ne transite vers le système de fichiers. L'accès est vérifié
+// par l'appartenance à la conversation (membership check).
+model PieceJointe {
+  id              String   @id @default(uuid())
+  messageId       String   @map("message_id")
+  nomOriginal     String   @map("nom_original")          // nom affiché
+  nomStockage     String   @unique @map("nom_stockage")  // UUID aléatoire sur disque
+  mimeType        String   @map("mime_type")              // image/jpeg, image/png, image/webp
+  tailleOctets    Int      @map("taille_octets")
+  largeurPx       Int?     @map("largeur_px")
+  hauteurPx       Int?     @map("hauteur_px")
+  creeLe          DateTime @default(now()) @map("cree_le")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("pieces_jointes")
 }
