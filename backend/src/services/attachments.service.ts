@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { writeFile, readFile, stat } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { prisma, type Tx } from "../lib/prisma.js";
+import { prisma } from "../lib/prisma.js";
 import { requeteInvalide, introuvable } from "../lib/erreurs.js";
 
 const UPLOAD_DIR = join(import.meta.dirname, "..", "..", "uploads", "chat");
